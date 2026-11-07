@@ -133,14 +133,23 @@ headless (o kiosk não tem ninguém para clicar "OK").
 └── v000N/
     ├── model.step              # geometria exportada pela página (ou pelo script)
     ├── documento.json          # estado do documento Chili3D no momento
-    ├── params.json             # variáveis paramétricas
+    ├── params.json             # variáveis paramétricas (e o material usado)
     ├── validacao.json          # medições + veredicto
     ├── export-step.json        # diagnóstico da exportação, quando ela falha
-    └── manifest.json
+    └── manifest.json           # quando/como; `completa`/`sem_step`
 ```
 
 Tudo em cima de um repositório git interno (`/parts/.git`): cada publicação é
-um commit.
+um commit que já contém o `validacao.json` — a medição entra no histórico
+junto com a geometria (a ordem importa: validar antes do commit).
+
+A massa do `validacao.json` usa o material com que a versão foi **publicada**
+(`params.json`), não o do `spec.json`. Publicar com PETG e validar depois
+devolve o mesmo número nos dois caminhos.
+
+`manifest.json` com `"completa": false` (ou `"sem_step": true`) marca uma
+publicação sem geometria — o registro da tentativa fica, mas não parece peça
+pronta.
 
 ## Validação FDM
 
@@ -163,6 +172,14 @@ revisão. O `validacao.json` carrega essa limitação em `limitacoes`.
 - **Trocar de peça exige recarregar a página** — não existe ferramenta de
   fechar documento, e `new_document` recusa se houver uma aberta. Use
   `POST /kiosk/recarregar` (o companheiro CDP executa `Page.reload`).
+- **O app restaura o documento do IndexedDB na recarga** (banco
+  `chili3d-db`): por isso o documento sobrevive a um `Page.reload`, e o
+  estado "sem documento" praticamente não ocorre sozinho. Para reproduzi-lo,
+  apague o banco por CDP (`indexedDB.deleteDatabase`) e recarregue.
+- **`publicar` sem documento aberto falha em ~13 ms** e não cria versão — a
+  guarda confere o estado antes de criar o diretório. Antes, um kiosk
+  recarregado arquivava um `vN/` sem STEP, 30 s de espera e um veredicto
+  "bloqueado" sem explicação.
 - **Mudança em `start.sh`/`entrypoint.sh` só vale no restart seguinte**: o `sh`
   já bufferizou o script. Conte **dois restarts**.
 - **`docker commit` exige `body.Cmd`** — sem ele a imagem não sobe.
@@ -175,6 +192,14 @@ revisão. O `validacao.json` carrega essa limitação em `limitacoes`.
   o ezdxf, puxado pelo build123d, precisa escrever `~/.config`.
 - **Logs Docker têm prefixo binário de 8 bytes** — filtre
   `[\x00-\x08\x0e-\x1f]` antes de ler.
+
+### Conferindo o que está rodando
+
+`/app/main.py` é atualizado no boot pelo `entrypoint.sh`. Um probe com
+`NetworkMode: container:<id>` **compartilha apenas a rede**: o `/app` que ele
+vê é o dele, não o do container alvo. Para conferir o arquivo real do
+contêiner, use `POST /containers/<id>/exec` (foi assim que se descobriu que o
+refresh estava funcionando e o defeito era do probe).
 
 ## Limitações conhecidas
 
@@ -197,5 +222,12 @@ Este repositório é um **protótipo**. Fragilidades reais, não teóricas:
 - **`git` dentro do volume** exige `safe.directory` quando rodado por root
   fora do núcleo, e a semente do registro (`/parts/.semeadura`) é copiada uma
   única vez.
-- **Um agent por vez no kiosk.** Não há trava: dois agentes chamando
+- **Um agente por vez no kiosk.** Não há trava: dois agentes chamando
   `run_program` na mesma página disputam o documento sem aviso.
+- **O registro não fica perpetuamente limpo.** O painel publica estado
+  periodicamente em `_estado/` e uma `validar` avulsa reescreve o
+  `validacao.json` com novo `gerado_em`: os dois aparecem como modificados até
+  a próxima publicação commitar.
+- **A versão zumbi aconteceu.** O defeito de arquivar sem documento foi real e
+  corrigido, mas a lição de fundo persiste: o fluxo confia no estado da RAM do
+  kiosk, e a única defesa é conferir antes de escrever.

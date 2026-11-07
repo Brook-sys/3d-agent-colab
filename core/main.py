@@ -456,8 +456,10 @@ print(json.dumps({{
     params = extract_params(code)
     write_json(directory / "params.json", {"fonte": "python", "params": params, "material": material})
     write_json(directory / "manifest.json", {"criado_em": utcnow(), "fonte": "python"})
-    git_commit(slug, number, "build python headless")
+    # medir ANTES do commit: senão a validação (a evidência do que foi
+    # publicado) fica fora do histórico do registro.
     validation = validate_version(slug, number, material)
+    git_commit(slug, number, f"build python headless ({validation.get('veredicto', 'sem veredicto')})")
     return {"ok": True, "versao": number, "validacao": validation, "stdout": proc.stdout[-2000:]}
 
 
@@ -717,8 +719,15 @@ def publish_version(slug: str, body: dict[str, Any]) -> dict[str, Any]:
             "sem_step": not completa,
         },
     )
-    git_commit(slug, number, "publicado" if completa else "publicação incompleta (sem STEP)")
+    # A validação entra no commit: a medição é parte da publicação, não um
+    # anexo que aparece depois sem histórico.
     validation = validate_version(slug, number, material)
+    veredicto = validation.get("veredicto", "sem veredicto")
+    git_commit(
+        slug,
+        number,
+        "publicado" if completa and veredicto == "ok" else f"publicado ({veredicto})",
+    )
     return {
         "ok": True,
         "slug": slug,
