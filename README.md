@@ -31,44 +31,72 @@ instrução ──▶ agente ──▶ ponte ──▶ página Chili3D (kiosk he
 |---|---|
 | `core/` | Núcleo FastAPI: REST + MCP + arquivo de registro + validação FDM |
 | `session/` | Ponte WebSocket/HTTP + kiosk Chromium + companheiro CDP |
-| `web/` | nginx: serve o Chili3D buildado e o painel em `/flow/` |
+| `web/` | nginx: serve o Chili3D compilado e o painel em `/flow/` |
 | `plugin-flow/` | Painel colaborativo (plugin Chili3D puro, sem build) |
 | `partes/` | Semente do registro: as peças de teste do conjunto mínimo |
-| `deploy/` | Empacotamento, build das imagens e servidor de arquivos |
-| `docker-compose.yml` | A stack (documentação; o deploy real é pelo Portainer) |
+| `deploy/` | Build local das imagens e servidor de arquivos (canal legado) |
+| `.github/workflows/imagens.yml` | Constrói e publica as três imagens no GHCR |
+| `chili3d.ref` | Commit do Chili3D compilado dentro da imagem `web` |
+| `docker-compose.yml` | A stack, apontando para as imagens do GHCR |
 
-`chili3d-upstream/` **não** faz parte deste versionamento: é um clone do fork
-do Chili3D, com o git dele. Compilar `dist/` lá dentro é o que alimenta
-`deploy/pacotes/dist.tar.gz`.
+`chili3d-upstream/` **não** faz parte deste versionamento: é um clone do
+Chili3D usado apenas para desenvolvimento. A imagem `web` **não** usa esse
+clone — o Dockerfile baixa o commit fixado em `chili3d.ref` do repositório
+oficial e compila dentro do build.
 
 ## Pré-requisitos
 
 - Um Portainer com um ambiente Docker local (id 3) e uma stack (id 65) já
   criada — o deploy é feito pelo MCP do Portainer, não pelo `docker` CLI.
-- Uma máquina de desenvolvimento que sirva `http://SEU-IP:8099` com o conteúdo
-  do projeto (`deploy/servidor-arquivos.mjs`). O host Docker **não** enxerga o
-  diretório do projeto: o código entra nas imagens por HTTP, no build.
 - Impressora de referência: **Elegoo Neptune 4**, bico 0,4 mm, volume
   220 × 220 × 250 mm, filamentos PLA/PETG.
+- Opcional, só para iterar sem rebuildar: uma máquina de desenvolvimento
+  servindo `http://SEU-IP:8099` (`deploy/servidor-arquivos.mjs`).
 
-## Subindo
+## Imagens e deploy
 
-```sh
-# 1. servir o projeto para os containers (na máquina de desenvolvimento)
-node deploy/servidor-arquivos.mjs "$PWD" 8099 &
+As três imagens são construídas pelo GitHub Actions e publicadas no GHCR:
 
-# 2. empacotar
-FONTE_URL=http://SEU-IP:8099 sh deploy/empacotar.sh
-
-# 3. construir as imagens (pelo MCP do Portainer — ver a seção abaixo)
-FONTE_URL=http://SEU-IP:8099 ./deploy/build-imagens.sh   # documenta o procedimento
-
-# 4. subir a stack (ou StackUpdate com PullImage:false se as imagens já existem)
-docker compose up -d
+```
+ghcr.io/brook-sys/3d-agent-colab-web      nginx + Chili3D 0.8.0 + painel /flow/
+ghcr.io/brook-sys/3d-agent-colab-session  Chromium headless + ponte WebSocket
+ghcr.io/brook-sys/3d-agent-colab-core     Python 3.12 + build123d + API/MCP
 ```
 
-Imagem nova só entra em vigor **removendo o container** e refazendo o
-`StackUpdate` — `restart` sozinho não troca a imagem.
+Nada é compilado no host Docker: ele só faz o pull. O workflow dispara em push
+na `main` que mexe em `core/`, `session/`, `web/`, `plugin-flow/`, `partes/`,
+`chili3d.ref` ou no próprio workflow — e também por disparo manual. Cada build
+publica duas tags: `main` (a que o compose usa) e `sha-<curto>` (para voltar a
+uma versão conhecida sem rebuildar). O cache é por imagem (`scope=core`,
+`session`, `web`), então mudar o painel não repaga o build do Chili3D.
+
+**Atualizar o Chili3D**: troque o SHA em `chili3d.ref` (e a nota de versão) e
+dê push. O app é recompilado do commit novo no build da imagem `web`. Nenhum
+binário entra neste repositório, e o fonte correspondente continua público no
+repositório oficial do Chili3D — que é a obrigação da licença AGPL-3.0 dele.
+
+**Subindo pelo Portainer**: com a stack apontando para o GHCR, um
+`StackUpdate` com *Pull image* ligado baixa a `main` mais nova e recria os
+containers. Imagem nova só entra em vigor **recreando o container** — o
+`restart` sozinho não troca a imagem.
+
+### Ciclo curto, sem CI
+
+```sh
+# builda as três imagens localmente com os MESMOS Dockerfiles do workflow
+./deploy/build-local.sh
+
+# sobe a stack com as imagens locais em vez do GHCR
+docker compose -f docker-compose.yml -f deploy/compose.local.yml up -d
+```
+
+Para aplicar uma mudança de código sem passar pelo CI, existe ainda o canal
+`FONTE_URL` (legado): sirva o projeto com `node deploy/servidor-arquivos.mjs
+"$PWD" 8099`, empacote com `sh deploy/empacotar.sh`, aponte `FONTE_URL` no
+ambiente dos containers e reinicie. Os entrypoints atualizam `/app` e o painel
+por cima do que está na imagem antes de subir. É útil para depurar, e é
+exatamente o modo de falha que o GHCR elimina: o que está na imagem passa a ser
+a verdade.
 
 ### Portas
 
@@ -182,7 +210,6 @@ revisão. O `validacao.json` carrega essa limitação em `limitacoes`.
   "bloqueado" sem explicação.
 - **Mudança em `start.sh`/`entrypoint.sh` só vale no restart seguinte**: o `sh`
   já bufferizou o script. Conte **dois restarts**.
-- **`docker commit` exige `body.Cmd`** — sem ele a imagem não sobe.
 - **Stale `SingletonLock`**: um Chromium morto a golpe deixa o lock do perfil e
   o próximo morre sem abrir janela. O loop do kiosk limpa antes de cada launch.
 - **`export_nodes` devolve só metadados** — os bytes do STEP são um download do
@@ -195,7 +222,8 @@ revisão. O `validacao.json` carrega essa limitação em `limitacoes`.
 
 ### Conferindo o que está rodando
 
-`/app/main.py` é atualizado no boot pelo `entrypoint.sh`. Um probe com
+`/app/main.py` é o que está na imagem (atualizado no boot pelo `entrypoint.sh`
+só quando `FONTE_URL` está acessível). Um probe com
 `NetworkMode: container:<id>` **compartilha apenas a rede**: o `/app` que ele
 vê é o dele, não o do container alvo. Para conferir o arquivo real do
 contêiner, use `POST /containers/<id>/exec` (foi assim que se descobriu que o

@@ -1,9 +1,14 @@
 # Fluxo de Peças 3D — stack (web + sessão + núcleo)
 #
-# Os três serviços rodam em imagens LOCAIS construídas por deploy/build-imagens.sh:
-# o host Docker não enxerga o diretório do projeto (é outra máquina), então o
-# código entra nas imagens por HTTP no momento do build e, em runtime, apenas
-# atualizações de melhor-esforço a partir de FONTE_URL.
+# As três imagens vêm do GHCR e são buildadas pelo workflow .github/workflows/imagens.yml
+# a cada push na main (ou por disparo manual). Nada é compilado no host Docker:
+#
+#   ghcr.io/brook-sys/3d-agent-colab-web      nginx: Chili3D 0.8.0 + painel em /flow/
+#   ghcr.io/brook-sys/3d-agent-colab-session  ponte WebSocket + Chromium headless (kiosk)
+#   ghcr.io/brook-sys/3d-agent-colab-core     FastAPI + MCP + registro + build123d
+#
+# Para fixar uma versão já publicada, troque a tag: `:sha-<curto>` fica no GHCR
+# ao lado de `:main`. Para publicar imagem nova, dê push na main.
 #
 #   web     nginx: Chili3D buildado na raiz + painel colaborativo em /flow/
 #   session ponte WebSocket + Chromium headless (kiosk) com a página sempre aberta
@@ -15,14 +20,19 @@
 #   17373 ponte WebSocket — só em 127.0.0.1: é controle remoto sem autenticação
 #   17400 relay HTTP da ponte — só em 127.0.0.1
 #
-# FONTE_URL (opcional) é o endereço HTTP da máquina de desenvolvimento; com ela
-# no ar, reiniciar um container basta para aplicar mudanças no código. Sem ela,
-# tudo continua funcionando com o que está gravado na imagem.
+# FONTE_URL (opcional, canal legado) é o endereço HTTP da máquina de
+# desenvolvimento: com ela no ar, os entrypoints atualizam o código por cima do
+# que está na imagem antes de subir. Serve para iterar sem rebuildar; o caminho
+# oficial de mudança é commit + workflow. Sem ela, tudo roda com a imagem.
+#
+# /venv NÃO é volume: ele já vem pronto dentro da imagem core, e volume externo
+# só faria o container reinstalar dependências no primeiro boot.
 
 services:
   web:
-    image: fluxo-web:dev
+    image: ghcr.io/brook-sys/3d-agent-colab-web:main
     restart: unless-stopped
+    pull_policy: always
     environment:
       FONTE_URL: ${FONTE_URL:-}
     ports:
@@ -30,8 +40,9 @@ services:
     networks: [fluxo]
 
   core:
-    image: fluxo-core:dev
+    image: ghcr.io/brook-sys/3d-agent-colab-core:main
     restart: unless-stopped
+    pull_policy: always
     working_dir: /app
     environment:
       PARTS_ROOT: /parts
@@ -44,14 +55,14 @@ services:
       FONTE_URL: ${FONTE_URL:-}
     volumes:
       - partes:/parts
-      - fluxo_venv:/venv
     ports:
       - "9001:9001"
     networks: [fluxo]
 
   session:
-    image: fluxo-session:dev
+    image: ghcr.io/brook-sys/3d-agent-colab-session:main
     restart: unless-stopped
+    pull_policy: always
     init: true
     shm_size: "1gb"
     environment:
@@ -77,8 +88,6 @@ services:
 volumes:
   partes:
   sessao:
-  fluxo_venv:
-    external: true
 
 networks:
   fluxo:

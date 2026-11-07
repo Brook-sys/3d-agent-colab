@@ -1,0 +1,22 @@
+# Contexto de build enxuto: sem isto, cada build do Actions mandaria o fork do
+# Chili3D (532 MB com .git, mais 444 MB de node_modules) para o daemon.
+chili3d-upstream/
+
+# Artefatos de deploy do caminho HTTP (FONTE_URL) — regenerados por
+# deploy/empacotar.sh, e o canal agora é opcional.
+deploy/pacotes/
+
+# Dependências instaladas localmente: a imagem instala as suas.
+session/node_modules/
+
+# Estado da máquina de desenvolvimento.
+.git/
+*.log
+.env
+.DS_Store
+
+# Documentação e CI não entram nas imagens.
+.github/
+README.md
+DEPLOY.md
+LOCAL.md

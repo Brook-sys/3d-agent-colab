@@ -1,0 +1,19 @@
+# Teste local: builda com ./deploy/build-local.sh e sobe a stack com as imagens
+# locais em vez das do GHCR.
+#
+#   docker compose -f docker-compose.yml -f deploy/compose.local.yml up -d
+#
+# `pull_policy: never` é o ponto: sem ele, o compose tentaria baixar
+# fluxo-<nome>:dev do GHCR, onde essas tags não existem.
+services:
+  web:
+    image: fluxo-web:dev
+    pull_policy: never
+
+  core:
+    image: fluxo-core:dev
+    pull_policy: never
+
+  session:
+    image: fluxo-session:dev
+    pull_policy: never

@@ -1,0 +1,16 @@
+# Versão do Chili3D compilada dentro da imagem `web`.
+#
+# O Chili3D não é código deste repositório: o Dockerfile baixa este commit do
+# repositório oficial e o compila. Para atualizar o app, troque o SHA abaixo
+# (e a nota de versão) e rode o workflow "imagens" — nenhum binário entra neste
+# repositório, e o fonte correspondente continua público no repositório oficial,
+# que é a obrigação da licença AGPL-3.0 do Chili3D.
+#
+# Como achar o SHA de uma release nova:
+#   gh api repos/xiangechen/chili3d/commits --jq '.[0].sha'
+#   (ou use a tag: git ls-remote https://github.com/xiangechen/chili3d 'refs/tags/v0.9.0')
+#
+# Commit atual: 0.8.0 · "🐛 fix(README): update description for clarity and
+# accuracy" · 2026-11-02 · baixado de codeload.github.com
+CHILI3D_REPO=xiangechen/chili3d
+CHILI3D_REF=4600206f9b354421f4de288e853efcde926da080
