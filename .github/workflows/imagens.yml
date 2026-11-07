@@ -28,6 +28,13 @@ permissions:
   contents: read
   packages: write
 
+# O GHCR exige minúsculas no caminho, e as expressões do Actions não têm
+# `lower()`. `github.repository` devolve "Brook-sys/3d-agent-colab", com B
+# maiúsculo, e o buildx rejeita a tag. Por isso o caminho é literal: se a conta
+# mudar de nome, é aqui que se mexe.
+env:
+  IMAGEM: ghcr.io/brook-sys/3d-agent-colab
+
 concurrency:
   group: imagens-${{ github.ref }}
   cancel-in-progress: true
@@ -69,7 +76,7 @@ jobs:
           file: ./${{ matrix.nome }}/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/${{ matrix.nome }}:main
-            ghcr.io/${{ github.repository }}/${{ matrix.nome }}:sha-${{ github.sha }}
+            ${{ env.IMAGEM }}/${{ matrix.nome }}:main
+            ${{ env.IMAGEM }}/${{ matrix.nome }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.nome }}
           cache-to: type=gha,scope=${{ matrix.nome }},mode=max
