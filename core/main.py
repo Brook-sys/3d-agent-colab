@@ -321,8 +321,23 @@ def shape_metrics(shape) -> dict[str, Any]:
     }
 
 
-def validate_version(slug: str, number: int, material: str = "PLA") -> dict[str, Any]:
+def validate_version(slug: str, number: int, material: str | None = None) -> dict[str, Any]:
+    """
+    Mede uma versão do BREP e dá um veredicto.
+
+    O material da validação é o material com que a versão foi PUBLICADA
+    (params.json), não o do spec: publicar com PETG e validar em separado
+    devolvia a massa do PLA — o mesmo volume gerava 1,48 g num caminho e
+    1,44 g no outro, e `delta_volume_vs_anterior`/veredicto ficavam
+    medindo coisas diferentes. A ordem é: argumento explícito → versão →
+    spec → PLA.
+    """
     directory = version_dir(slug, number)
+    if material is None:
+        material = read_json(directory / "params.json", {}).get("material")
+    if material is None:
+        material = read_json(part_dir(slug) / "spec.json", {}).get("material")
+    material = str(material or "PLA").upper()
     step = directory / "model.step"
     result: dict[str, Any] = {
         "slug": slug,
@@ -355,7 +370,6 @@ def validate_version(slug: str, number: int, material: str = "PLA") -> dict[str,
     metrics = shape_metrics(shape)
     size = metrics["bbox_mm"]["size"]
     printer = IMPRESSORA["volume"]
-    material = material.upper()
     density = MATERIAIS.get(material, MATERIAIS["PLA"])
     mass_g = metrics["volume_mm3"] / 1000.0 * density
     filament_m = metrics["volume_mm3"] / (3.14159265 * (FILAMENTO_DIAMETRO / 2) ** 2) / 1000.0
@@ -734,8 +748,7 @@ async def parts_versoes(slug: str) -> dict[str, Any]:
 
 @app.post("/parts/{slug}/versoes/{numero}/validar")
 async def parts_validar(slug: str, numero: int) -> dict[str, Any]:
-    spec = read_json(part_dir(slug) / "spec.json", {})
-    return validate_version(slug, numero, spec.get("material", "PLA"))
+    return validate_version(slug, numero)
 
 
 @app.get("/parts/{slug}/anotacoes")
@@ -919,8 +932,8 @@ def mcp_validar(slug: str, versao: int | None = None) -> dict[str, Any]:
         if not versions:
             return {"ok": False, "erro": "peça sem versões"}
         versao = versions[-1]
-    spec = read_json(directory / "spec.json", {})
-    return validate_version(slug, versao, spec.get("material", "PLA"))
+    # sem `material`: a validação usa o material com que a versão foi publicada
+    return validate_version(slug, versao)
 
 
 @tool(
