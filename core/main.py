@@ -593,20 +593,44 @@ def publish_version(slug: str, body: dict[str, Any]) -> dict[str, Any]:
     directory = part_dir(slug)
     if not directory.exists():
         return {"ok": False, "erro": f"peça inexistente: {slug}"}
+
+    # >>> A ordem aqui é a correção de um defeito real: a versão era criada
+    # ANTES de saber se havia documento, então um kiosk recarregado (o
+    # documento vive na RAM da página) produzia um diretório vN/ sem STEP,
+    # 30 segundos de espera por um download que nunca viria e um veredicto
+    # "bloqueado" arquivado no registro. Confira primeiro, arquive depois.
+    state_tool = pick_page_tool("document", "state") or pick_page_tool("document")
+    state = (
+        bridge_call(state_tool, {})
+        if state_tool
+        else {"ok": False, "content": "sem ferramenta de estado do documento"}
+    )
+    conteudo_estado = parse_reply(state) or {}
+    sem_documento = bool(
+        not state.get("ok")  # a ponte não respondeu: não há como exportar nada
+        or conteudo_estado.get("error")
+        or (isinstance(state.get("content"), str) and "no open document" in state["content"].lower())
+        or conteudo_estado.get("hasActiveDocument") is False
+    )
+    if sem_documento:
+        return {
+            "ok": False,
+            "erro": (
+                "a página não tem documento aberto — o kiosk foi recarregado "
+                "ou a peça não foi modelada ainda. Reconstrua o documento "
+                "(run_parametric) antes de publicar."
+            ),
+            "diagnostico": {"estado": state.get("content")},
+        }
+
     number = next_version(slug)
     target = version_dir(slug, number)
     target.mkdir(parents=True, exist_ok=True)
     material = str(body.get("material") or read_json(directory / "spec.json", {}).get("material", "PLA"))
 
     diagnostico: dict[str, Any] = {"versao": number, "material": material}
-
-    state_tool = pick_page_tool("document", "state") or pick_page_tool("document")
-    state = bridge_call(state_tool, {}) if state_tool else {"ok": False, "content": "sem ferramenta de estado do documento"}
     diagnostico["ferramenta_estado"] = state_tool
-    if state.get("ok"):
-        write_json(target / "documento.json", {"ferramenta": state_tool, "conteudo": state.get("content")})
-    else:
-        diagnostico["estado"] = state.get("content")
+    write_json(target / "documento.json", {"ferramenta": state_tool, "conteudo": state.get("content")})
 
     export_tool = pick_page_tool("export", "node") or pick_page_tool("export")
     exported: dict[str, Any] = {"ok": False, "content": "sem ferramenta de exportação"}
@@ -622,7 +646,7 @@ def publish_version(slug: str, body: dict[str, Any]) -> dict[str, Any]:
         diagnostico["export_pedido"] = {"ferramenta": export_tool, "arquivo": arquivo}
         conteudo = parse_reply(exported) or {}
         nome_captura = str(conteudo.get("filename") or arquivo)
-        if not exported.get("ok"):
+        if not exported.get("ok") or conteudo.get("error"):
             diagnostico["step"] = f"export falhou: {exported.get('content')}"
         else:
             # O download é assíncrono: a gravação em disco acontece depois da
@@ -666,8 +690,20 @@ def publish_version(slug: str, body: dict[str, Any]) -> dict[str, Any]:
             "diagnostico": diagnostico,
         },
     )
-    write_json(target / "manifest.json", {"criado_em": utcnow(), "fonte": "pagina"})
-    git_commit(slug, number, "publicado")
+    # Uma versão sem STEP continua arquivada (o registro da tentativa é útil
+    # para depurar), mas fica marcada: senão ela parece uma peça pronta e o
+    # próximo `validar` repete o "bloqueado" sem explicar o motivo.
+    completa = step_bytes is not None and (target / "model.step").exists()
+    write_json(
+        target / "manifest.json",
+        {
+            "criado_em": utcnow(),
+            "fonte": "pagina",
+            "completa": completa,
+            "sem_step": not completa,
+        },
+    )
+    git_commit(slug, number, "publicado" if completa else "publicação incompleta (sem STEP)")
     validation = validate_version(slug, number, material)
     return {
         "ok": True,
