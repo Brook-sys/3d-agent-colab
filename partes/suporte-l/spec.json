@@ -1,0 +1,21 @@
+{
+  "slug": "suporte-l",
+  "intencao": "Cantoneira em L de teste: chapa 40x35 com quatro furos e aba vertical de 35mm com dois furos.",
+  "material": "PLA",
+  "processo": "FDM 0.4mm",
+  "criado_em": "2026-11-07T00:00:00+00:00",
+  "impressora": {
+    "modelo": "Elegoo Neptune 4",
+    "volume": [220.0, 220.0, 250.0],
+    "bico": 0.4
+  },
+  "params": {
+    "largura": { "valor": 40.0, "fonte": "assumido", "nota": "largura da chapa (mm)" },
+    "profundidade": { "valor": 35.0, "fonte": "assumido", "nota": "profundidade da base (mm)" },
+    "altura": { "valor": 35.0, "fonte": "assumido", "nota": "altura da aba vertical (mm)" },
+    "espessura": { "valor": 3.0, "fonte": "FDM 0.4", "nota": "múltiplo da altura de camada" },
+    "furo": { "valor": 3.2, "fonte": "FDM 0.4", "nota": "folga M3" },
+    "margem": { "valor": 6.0, "fonte": "assumido", "nota": "distância do furo à borda (mm)" }
+  },
+  "conjunto": ["suporte-l", "espacador"]
+}

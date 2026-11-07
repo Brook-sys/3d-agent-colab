@@ -1,0 +1,5 @@
+# Núcleo do fluxo: API + MCP. A mudança deste arquivo força reinstalação no volume.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# kernel geométrico (traz o OCP/OCCT para importar STEP e medir)
+build123d>=0.9.0

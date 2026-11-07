@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "fluxo-pecas": {
+        "type": "remote",
+        "url": "http://SEU-HOST:9001/mcp",
+        "oauth": false,
+        "protocol": "legacy",
+        "timeout": {
+          "startup": 60000,
+          "catalog": 60000,
+          "execution": 600000
+        }
+      }
+    }
+  }
+}

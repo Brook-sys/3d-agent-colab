@@ -1,0 +1,85 @@
+# Fluxo de Peças 3D — stack (web + sessão + núcleo)
+#
+# Os três serviços rodam em imagens LOCAIS construídas por deploy/build-imagens.sh:
+# o host Docker não enxerga o diretório do projeto (é outra máquina), então o
+# código entra nas imagens por HTTP no momento do build e, em runtime, apenas
+# atualizações de melhor-esforço a partir de FONTE_URL.
+#
+#   web     nginx: Chili3D buildado na raiz + painel colaborativo em /flow/
+#   session ponte WebSocket + Chromium headless (kiosk) com a página sempre aberta
+#   core    FastAPI + MCP + arquivo de registro + validação FDM (build123d/OCP)
+#
+# Portas publicadas no host:
+#   8080  Chili3D + painel (navegador do usuário)
+#   9001  REST + MCP do núcleo (o agente aponta o MCP para http://<host>:9001/mcp)
+#   17373 ponte WebSocket — só em 127.0.0.1: é controle remoto sem autenticação
+#   17400 relay HTTP da ponte — só em 127.0.0.1
+#
+# FONTE_URL (opcional) é o endereço HTTP da máquina de desenvolvimento; com ela
+# no ar, reiniciar um container basta para aplicar mudanças no código. Sem ela,
+# tudo continua funcionando com o que está gravado na imagem.
+
+services:
+  web:
+    image: fluxo-web:dev
+    restart: unless-stopped
+    environment:
+      FONTE_URL: ${FONTE_URL:-}
+    ports:
+      - "8080:80"
+    networks: [fluxo]
+
+  core:
+    image: fluxo-core:dev
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      PARTS_ROOT: /parts
+      BRIDGE_URL: http://session:17400
+      VENV_PYTHON: /venv/bin/python
+      PORT: "9001"
+      PRINTER_MODEL: "Elegoo Neptune 4"
+      PUID: "1000"
+      PGID: "1000"
+      FONTE_URL: ${FONTE_URL:-}
+    volumes:
+      - partes:/parts
+      - fluxo_venv:/venv
+    ports:
+      - "9001:9001"
+    networks: [fluxo]
+
+  session:
+    image: fluxo-session:dev
+    restart: unless-stopped
+    init: true
+    shm_size: "1gb"
+    environment:
+      BRIDGE_PORT: "17373"
+      BRIDGE_HTTP_PORT: "17400"
+      BRIDGE_DATA_DIR: /data
+      # `bridge=` (porta vazia = 17373) faz a página conectar em ws://127.0.0.1:17373/ws.
+      # `plugin=` PRECISA ser URL absoluta e do mesmo host: o PluginManager faz
+      # `new URL(valor)` e compara `url.host` com o da página — com um caminho
+      # relativo ("/flow/") ele lança, e o `catch` do build chama alert(), que
+      # congela o renderer headless (nada de `open` do WebSocket, nenhum timer).
+      # `api=` aponta o painel para o núcleo; `part=` é a peça que o painel
+      # acompanha (publicar/comentar/medir); `painel=` liga o painel.
+      KIOSK_URL: "http://web/?bridge=&plugin=http://web/flow/&part=espacador&painel=1&api=http://core:9001"
+      FONTE_URL: ${FONTE_URL:-}
+    volumes:
+      - sessao:/data
+    ports:
+      - "127.0.0.1:17373:17373"
+      - "127.0.0.1:17400:17400"
+    networks: [fluxo]
+
+volumes:
+  partes:
+  sessao:
+  fluxo_venv:
+    external: true
+
+networks:
+  fluxo:
+    driver: bridge

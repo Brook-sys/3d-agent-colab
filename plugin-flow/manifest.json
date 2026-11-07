@@ -1,0 +1,12 @@
+{
+  "name": "Fluxo de Peças",
+  "version": "1.0.0",
+  "description": "Painel colaborativo do fluxo de peças paramétricas: variáveis, anotações, chat e publicação de versões",
+  "main": "src/extension.js",
+  "author": {
+    "name": "projeto-3d-parts"
+  },
+  "engines": {
+    "chili3d": ">=0.6"
+  }
+}
