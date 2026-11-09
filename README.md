@@ -195,6 +195,18 @@ envelope, o volume, a topologia e a massa são medidos de fato na geometria —
 NÃO são**: as regras ficam declaradas no spec e a conferência é do agente na
 revisão. O `validacao.json` carrega essa limitação em `limitacoes`.
 
+## Licenças
+
+O app servido pela imagem `web` é o **Chili3D**, licenciado em **AGPL-3.0**
+(repositório oficial: `xiangechen/chili3d`, commit fixado em `chili3d.ref`).
+Ele é compilado do fonte a cada build — o binário que roda no kiosk é
+derivado daquele commit, e o fonte correspondente está público lá.
+
+O código **deste** repositório (`core/`, `session/`, `web/`, `plugin-flow/`)
+não tem licença declarada, e isso é uma escolha em aberto, não um esquecimento:
+sem um arquivo `LICENSE`, o padrão legal é "todos os direitos reservados".
+Definir uma é tarefa do dono do repositório.
+
 ## Notas de operação (o que quebra)
 
 - **Trocar de peça exige recarregar a página** — não existe ferramenta de
