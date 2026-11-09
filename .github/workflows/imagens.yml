@@ -80,3 +80,23 @@ jobs:
             ${{ env.IMAGEM }}/${{ matrix.nome }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.nome }}
           cache-to: type=gha,scope=${{ matrix.nome }},mode=max
+
+      # Pacote do GHCR nasce PRIVADO. Sem este passo, o host Docker precisaria de
+      # credencial (docker login) para puxar, e a stack do Portainer não subiria
+      # imagem nova. O conteúdo já é público — o repo é público e o Chili3D
+      # também —, então não há nada a esconder aqui.
+      #
+      # O GITHUB_TOKEN do Actions traz packages:write, que é o que a PATCH exige.
+      # O 404 é tolerante: o pacote pode levar alguns segundos para aparecer na
+      # API depois do push, e falhar aqui não deve derrubar um build que deu
+      # certo — o aviso manda acertar à mão em Configurar acesso do pacote.
+      - name: pacote público no GHCR
+        run: |
+          sleep 8
+          curl -fsSL -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/user/packages/container/3d-agent-colab%2F${{ matrix.nome }}" \
+            -d '{"visibility":"public"}' \
+            && echo "pacote ${{ matrix.nome }} público" \
+            || echo "AVISO: não foi possível tornar ${{ matrix.nome }} público — ajuste em Configurar acesso do pacote"
