@@ -4,12 +4,28 @@
 # (dependências) e /seed/partes (cópia inicial do registro). O entrypoint só
 # semeia /parts na primeira subida e executa o uvicorn; nada é buscado na rede.
 #
-# git entra na imagem porque o núcleo versiona o registro /parts em runtime
-# (`git_commit`), e não há como instalá-lo depois sem a rede.
+# Duas coisas entram por apt e não podem faltar:
+#
+#   git          o núcleo versiona o registro /parts em runtime (`git_commit`);
+#                sem ele a publicação perde o histórico.
+#   libgl1 + X11 o wheel do OCP (cad-query) linka libGL/libGLX/libGLdispatch,
+#                libX11/libxcb e libXext/libSM/libICE. Sem essas, `import
+#                build123d` morre com "libGL.so.1: cannot open shared object
+#                file" e a validação geométrica fica muda — foi assim que o
+#                primeiro build deste Dockerfile falhou. Os drivers mesa
+#                (libgl1-mesa-dri, mesa-libgallium, mesa-vulkan-drivers) NÃO
+#                são necessários: medição de BREP não abre contexto GL.
 FROM python:3.12-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
+ && apt-get install -y --no-install-recommends \
+        git \
+        ca-certificates \
+        libgl1 \
+        libx11-6 \
+        libxext6 \
+        libsm6 \
+        libice6 \
  && rm -rf /var/lib/apt/lists/*
 
 # As dependências vêm ANTES do código: a camada do venv só é refeita quando
@@ -18,8 +34,26 @@ COPY core/requirements.txt /app/requirements.txt
 RUN python -m venv /venv \
  && /venv/bin/pip install --no-cache-dir --upgrade pip \
  && /venv/bin/pip install --no-cache-dir -r /app/requirements.txt \
- && md5sum /app/requirements.txt | cut -d' ' -f1 > /venv/.req-hash \
- && /venv/bin/python -c "import build123d, fastapi, uvicorn; print('BUILD_CORE_OK')"
+ && md5sum /app/requirements.txt | cut -d' ' -f1 > /venv/.req-hash
+
+# A verificação exercita o kernel, não só o import: exporta um STEP e relê.
+# Uma imagem que importa mas não mede passaria por um teste frouxo e quebraria
+# na primeira publicação.
+RUN /venv/bin/python - <<'PY'
+try:
+    from build123d import Box, export_step, import_step
+except ImportError as err:
+    raise SystemExit(f"build123d nao importa: {err}")
+
+caixa = Box(10, 20, 5)
+export_step(caixa, "/tmp/probe.step")
+volta = import_step("/tmp/probe.step")
+
+assert abs(caixa.volume - 1000.0) < 1e-6, f"volume errado: {caixa.volume}"
+assert len(volta.solids()) == 1, f"STEP nao voltou como solido: {len(volta.solids())}"
+print("BUILD_CORE_OK", caixa.volume, volta.volume)
+PY
+ && rm -f /tmp/probe.step
 
 COPY core/ /app/
 COPY partes/ /seed/partes/
