@@ -38,25 +38,10 @@ RUN python -m venv /venv \
 
 # A verificação exercita o kernel, não só o import: exporta um STEP e relê.
 # Uma imagem que importa mas não mede passaria por um teste frouxo e quebraria
-# na primeira publicação.
-RUN /venv/bin/python - <<'PY'
-try:
-    from build123d import Box, export_step, import_step
-except ImportError as err:
-    raise SystemExit(f"build123d nao importa: {err}")
-
-caixa = Box(10, 20, 5)
-export_step(caixa, "/tmp/probe.step")
-volta = import_step("/tmp/probe.step")
-
-assert abs(caixa.volume - 1000.0) < 1e-6, f"volume errado: {caixa.volume}"
-assert len(volta.solids()) == 1, f"STEP nao voltou como solido: {len(volta.solids())}"
-print("BUILD_CORE_OK", caixa.volume, volta.volume)
-PY
- && rm -f /tmp/probe.step
-
+# na primeira publicação. O probe é apagado no mesmo passo — não fica na imagem.
 COPY core/ /app/
 COPY partes/ /seed/partes/
+RUN /venv/bin/python /app/probe-build.py && rm -f /app/probe-build.py
 
 WORKDIR /app
 ENTRYPOINT ["/app/entrypoint.sh"]

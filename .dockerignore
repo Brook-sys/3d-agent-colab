@@ -9,6 +9,11 @@ deploy/pacotes/
 # Dependências instaladas localmente: a imagem instala as suas.
 session/node_modules/
 
+# Bytecode gerado nesta máquina.
+__pycache__/
+*.pyc
+*.pyo
+
 # Estado da máquina de desenvolvimento.
 .git/
 *.log
