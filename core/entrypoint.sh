@@ -83,7 +83,20 @@ mkdir -p "$FLUXO_HOME/.config" 2>/dev/null || true
 export HOME="$FLUXO_HOME"
 export XDG_CONFIG_HOME="$FLUXO_HOME/.config"
 if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
-    chown -R "$TARGET_UID:$TARGET_GID" /parts "$VENV_DIR" /app "$FLUXO_HOME" 2>/dev/null || true
+    # SÓ o /parts (e o HOME, que é minúsculo). O /venv e o /app já vêm com o
+    # dono certo desde a imagem — `COPY --chown` e o `chown` na camada do venv.
+    #
+    # Estava `chown -R /parts /venv /app /tmp/fluxo-home` e isso custou mais de
+    # 10 minutos de boot neste host: no overlayfs, trocar o dono de um arquivo
+    # exige copiá-lo antes para a camada superior, e o venv são dezenas de
+    # milhares de arquivos (build123d + OCP). A stack subiu e ficou 10 minutos
+    # sem responder em 8080/9001, com healthcheck vermelho — o modo de falha
+    # mais confuso que existe, porque o container aparece "Up".
+    #
+    # O /parts ainda precisa: um volume novo nasce com dono root e a semente é
+    # copiada com `cp -a`. Basta o diretório topo — o conteúdo já vem certo.
+    chown "$TARGET_UID:$TARGET_GID" /parts 2>/dev/null || true
+    chown -R "$TARGET_UID:$TARGET_GID" "$FLUXO_HOME" 2>/dev/null || true
     echo "$LOG reexecutando como uid $TARGET_UID"
     exec setpriv --reuid="$TARGET_UID" --regid="$TARGET_GID" --clear-groups "$VENV_PY" $ARGS
 fi

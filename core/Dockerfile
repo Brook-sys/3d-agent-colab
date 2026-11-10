@@ -64,16 +64,27 @@ RUN apt-get update \
 
 # As dependências vêm ANTES do código: a camada do venv só é refeita quando
 # requirements.txt muda de verdade, não a cada edição do main.py.
+#
+# O `chown` no fim NÃO é enfeite. O entrypoint precisa reexecutar como uid 1000
+# (serviço de rede não deve rodar como root) e, se /venv nascer com dono root,
+# ele precisa de um `chown -R /venv` em CADA boot. No overlayfs um chown
+# recursivo copia cada arquivo para a camada superior antes de trocar o dono —
+# medição real neste host: mais de 10 minutos e a stack ficou sem API nesse
+# tempo todo (healthcheck vermelho, porta 9000 recusando). Feito no build, é
+# cache e não aparece no boot.
 COPY core/requirements.txt /app/requirements.txt
 RUN python -m venv /venv \
  && /venv/bin/pip install --no-cache-dir --upgrade pip \
  && /venv/bin/pip install --no-cache-dir -r /app/requirements.txt \
+ && chown -R 1000:1000 /venv \
  && md5sum /app/requirements.txt | cut -d' ' -f1 > /venv/.req-hash
 
-COPY core/ /app/
-COPY partes/ /seed/partes/
-COPY --from=builder /src/dist /app/static/dist
-COPY plugin-flow/ /app/static/flow/
+# `--chown` em todos os COPY pela mesma razão: sem ele, /app e /seed nascem
+# root-owned e o chown volta a ser problema de boot.
+COPY --chown=1000:1000 core/ /app/
+COPY --chown=1000:1000 partes/ /seed/partes/
+COPY --chown=1000:1000 --from=builder /src/dist /app/static/dist
+COPY --chown=1000:1000 plugin-flow/ /app/static/flow/
 
 # 1. sintaxe: `compileall` falha (e o build junto) em erro de sintaxe, o que a
 #    máquina de desenvolvimento não pega — ela não tem python. Sem este passo,
