@@ -87,25 +87,50 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.nome }}
           cache-to: type=gha,scope=${{ matrix.nome }},mode=max
 
-      # Pacote do GHCR nasce PRIVADO. Sem este passo, o host Docker precisaria de
-      # credencial (docker login) para puxar, e a stack do Portainer não subiria
+      # Pacote do GHCR nasce PRIVADO. Sem torná-lo público, o host Docker precisa
+      # de credencial (docker login) para puxar, e a stack do Portainer não sobe
       # imagem nova. O conteúdo já é público — o repo é público e o Chili3D
       # também —, então não há nada a esconder aqui.
       #
       # O GITHUB_TOKEN do Actions traz packages:write, que é o que a PATCH exige.
-      # O 404 é tolerante: o pacote pode levar alguns segundos para aparecer na
-      # API depois do push, e falhar aqui não deve derrubar um build que deu
-      # certo — o aviso manda acertar à mão em Configurar acesso do pacote.
       #
       # Sobre a URL: como o pacote usa hífen, o nome NÃO precisa de percent-encode
       # (`3d-agent-colab%2Fcore` seria a variante com barra, e dá 404 aqui).
+      #
+      # Duas coisas que o primeiro run desta fase ensinou:
+      #   1. um `sleep 8` não é suficiente — o pacote pode levar mais para
+      #      aparecer na API depois do push, e o PATCH devolve 404;
+      #   2. o PATCH com 200 NÃO prova que o pacote é público (ele pode já ter
+      #      sido), e o 404 não falha o build.
+      # Por isso o passo termina no teste que importa: um pull ANÔNIMO do
+      # manifesto. É exatamente assim que o host Docker puxa — sem credencial.
+      # Sem essa verificação, um build verde com pacote privado passa e a stack
+      # do Portainer não recria nada, em silêncio.
       - name: pacote público no GHCR
         run: |
-          sleep 8
-          curl -fsSL -X PATCH \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/user/packages/container/3d-agent-colab-${{ matrix.nome }}" \
-            -d '{"visibility":"public"}' \
-            && echo "pacote ${{ matrix.nome }} público" \
-            || echo "AVISO: não foi possível tornar ${{ matrix.nome }} público — ajuste em Configurar acesso do pacote"
+          PACOTE="3d-agent-colab-${{ matrix.nome }}"
+          patch="sem-efeito"
+          for tentativa in 1 2 3 4 5; do
+              if curl -fsSL -X PATCH \
+                   -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                   -H "Accept: application/vnd.github+json" \
+                   "https://api.github.com/user/packages/container/$PACOTE" \
+                   -d '{"visibility":"public"}' >/dev/null; then
+                  patch="ok"
+                  break
+              fi
+              echo "tentativa $tentativa: PATCH falhou — aguardando o pacote aparecer na API"
+              sleep 10
+          done
+
+          TOKEN="$(curl -fsSL "https://ghcr.io/token?scope=repository:brook-sys/$PACOTE:pull&service=ghcr.io" \
+                   | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+          if curl -fsSL -o /dev/null \
+               -H "Authorization: Bearer $TOKEN" \
+               -H "Accept: application/vnd.oci.image.index.v1+json" \
+               "https://ghcr.io/v2/brook-sys/$PACOTE/manifests/main"; then
+              echo "pacote $PACOTE público — pull anônimo OK (PATCH: $patch)"
+          else
+              echo "::error title=Pacote $PACOTE não está público::o pull anônimo falhou; o host Docker não puxa sem docker login. Ajuste em Configurar acesso do pacote."
+              exit 1
+          fi
