@@ -252,7 +252,19 @@ Definir uma é tarefa do dono do repositório.
 
 - **Trocar de peça exige recarregar a página** — não existe ferramenta de
   fechar documento, e `new_document` recusa se houver uma aberta. Use
-  `POST /kiosk/recarregar` (o companheiro CDP executa `Page.reload`).
+  `POST /kiosk/recarregar` (o companheiro CDP executa `Page.reload`). Esse
+  endpoint é da **PONTE**, não do núcleo: `http://<host>:17400/kiosk/recarregar`,
+  que só está publicado em `127.0.0.1` — de fora do host Docker não há como
+  chamá-lo, e o núcleo não tem rota equivalente.
+- **`chown -R` em diretório de imagem dentro do entrypoint é dívida de startup
+  garantida.** Foi real: o núcleo fazia `chown -R /parts /venv /app` antes de
+  reexecutar como uid 1000, e no overlayfs cada arquivo precisa ser copiado
+  para a camada superior antes de o dono poder ser trocado. Medido neste host:
+  4 s de CPU e mais de 10 minutos de relógio, com o container em estado "Up",
+  healthcheck vermelho e a porta 9001 recusando conexão — o pior modo de falha
+  para diagnosticar, porque "Up" mente. A correção foi mover a conta para o
+  build (`COPY --chown` e `chown` na camada do venv), onde ela vira cache. Fica
+  a regra: qualquer permissão que o runtime precisa, a imagem já entrega.
 - **O app restaura o documento do IndexedDB na recarga** (banco
   `chili3d-db`): por isso o documento sobrevive a um `Page.reload`, e o
   estado "sem documento" praticamente não ocorre sozinho. Para reproduzi-lo,
@@ -279,14 +291,16 @@ Definir uma é tarefa do dono do repositório.
   ganhou: uma origem só, sem `location ^~` e sem alias. A troca foi consciente e
   é a maior dívida desta mudança — se o app passar a servir muitos usuários, um
   proxy na frente volta a ser necessário.
-- **A ordem dos `mount` em `main.py` é frágil, e o último engole tudo.** Os
-  mounts são casados na ordem de registro: `app.mount("/", StaticFiles(dist))`
-  responde `index.html` com **200** para qualquer caminho que veio antes dele
-  sem match. Ou seja: se alguém mover uma rota da API para depois do bloco
-  estático, a rota não dá 404 — ela devolve o app, e o defeito é silencioso. O
-  bloco estático é o **último** do arquivo exatamente por isso, e a ordem atual
-  (`/arquivos` → `/mcp` → `/flow` → `/`) deve ser reconferida a cada mexida no
-  `main.py`. No nginx isso era o `location ^~`, que não dependia de posição.
+- **A ordem dos `mount` em `main.py` é frágil, e o último é casado antes de
+  qualquer rota registrada depois dele.** Os mounts são casados na ordem de
+  registro, então `app.mount("/", StaticFiles(dist))` fica no fim e `/flow` vem
+  antes. Se alguém mover uma rota da API para depois do bloco estático, ela fica
+  inacessível — o mount é casado primeiro. O sintoma medido não é o que se
+  supõe: GET em caminho inexistente continua dando 404 do FastAPI (não
+  index.html com 200), mas **POST num caminho com barra final devolve 405 do
+  mount**, não da API. Ou seja: o estrago é real, mas ele não grita sempre —
+  um 405 ou uma rota que "não pega" sem explicação é o que se vê. No nginx isso
+  era o `location ^~`, que não dependia de posição.
 - **O núcleo e o registro de peças dividem o mesmo cgroup.** Antes o kernel
   geométrico e o servidor estático viviam em containers separados; hoje um
   estouro de memória no núcleo leva a validação junto. O inverso também: uma

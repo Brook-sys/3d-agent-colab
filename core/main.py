@@ -1115,10 +1115,15 @@ async def mcp_get() -> dict[str, Any]:
 # satisfeita de graça, sem `location ^~` nem alias.
 #
 # A ORDEM IMPORTA, e é frágil: os mounts são casados na ordem de registro, e o
-# mount em "/" engole tudo o que não foi casado antes dele. `/flow` vem primeiro
-# por isso, e este bloco é o ÚLTIMO do arquivo de propósito — se alguém mover
-# rotas da API para baixo dele, a API some silenciosamente (o mount responde
-# index.html com 200 no lugar de 404 e ninguém percebe o estrago).
+# mount em "/" é casado antes de qualquer rota registrada DEPOIS dele. `/flow`
+# vem primeiro por isso, e este bloco é o ÚLTIMO do arquivo de propósito.
+#
+# Medido no container, para não escrever lenda: mover uma rota da API para baixo
+# daqui não a deixa "respondendo index.html no lugar de 404" — GET em caminho
+# inexistente continua dando 404 do FastAPI. O que acontece de verdade é (a) a
+# rota ficar inacessível, porque o mount é casado antes, e (b) POST num caminho
+# com barra final devolver 405 do mount, não da API. O estrago é real, mas o
+# sintoma engana: nem sempre grita.
 #
 # Trade-off assumido: uvicorn não é nginx. Para um usuário numa LAN serve, e
 # continua sem gzip (o nginx também não tinha). Se o uso crescer, um proxy na
