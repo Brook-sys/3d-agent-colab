@@ -531,7 +531,12 @@ async def ponte_chamar(request: Request) -> dict[str, Any]:
     return bridge_call(str(body.get("name", "")), body.get("args") or {})
 
 
-@app.post("/kiosk/recarregar")
+# `response_model=None` não é enfeite: sem ele o FastAPI tenta transformar a
+# união `dict | Response` num campo Pydantic e o import do módulo morre com
+# "Invalid args for response field" — o container sobe, healthcheck fica
+# vermelho e a API nunca escuta. Foi assim que esta rota quebrou o primeiro
+# deploy (log em /containers/3d-agent-colab-core/logs).
+@app.post("/kiosk/recarregar", response_model=None)
 async def kiosk_recarregar() -> dict[str, Any] | Response:
     """Recarrega a página do kiosk (troca de peça exige página limpa).
 
