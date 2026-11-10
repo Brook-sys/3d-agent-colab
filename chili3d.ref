@@ -1,4 +1,4 @@
-# Versão do Chili3D compilada dentro da imagem `web`.
+# Versão do Chili3D compilada dentro da imagem `core`.
 #
 # O Chili3D não é código deste repositório: o Dockerfile baixa este commit do
 # repositório oficial e o compila. Para atualizar o app, troque o SHA abaixo

@@ -6,10 +6,6 @@
 # `pull_policy: never` é o ponto: sem ele, o compose tentaria baixar
 # fluxo-<nome>:dev do GHCR, onde essas tags não existem.
 services:
-  web:
-    image: fluxo-web:dev
-    pull_policy: never
-
   core:
     image: fluxo-core:dev
     pull_policy: never

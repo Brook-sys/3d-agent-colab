@@ -1,16 +1,22 @@
 """
 Núcleo do fluxo de peças paramétricas.
 
-Um único processo FastAPI que serve três coisas:
+Um único processo FastAPI que serve quatro coisas:
 
   1. REST  (/parts, /mensagens, /anotacoes, /estado-plugin, /ponte/*)
      usado pelo painel (plugin Chili3D) e por qualquer cliente HTTP;
   2. MCP streamable-http em /mcp  — as ferramentas que o agente chama;
-  3. arquivo de registro em /parts/<slug>/vN/ com git.
+  3. arquivo de registro em /parts/<slug>/vN/ com git;
+  4. estático: o app Chili3D (/app/static/dist) e o painel (/flow/).
 
-O núcleo nunca é a fonte da verdade da geometomia: a geometoria vive no
+O núcleo nunca é a fonte da verdade da geometria: a geometria vive no
 documento Chili3D (controlado pela ponte) ou num script build123d. O núcleo
 arquiva, mede, valida e publica.
+
+O item 4 vivia num nginx à parte. Servindo tudo no mesmo processo, o app e o
+painel ficam no mesmo host — que é o que a regra do PluginManager exige — e a
+stack passa a dois containers. O custo dessa troca está no bloco "estático",
+no fim deste arquivo, e foi anotado lá.
 """
 from __future__ import annotations
 
@@ -32,6 +38,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 # ----------------------------------------------------------------- config
 
@@ -493,11 +500,18 @@ app.add_middleware(
 @app.get("/health")
 async def health() -> dict[str, Any]:
     bridge = bridge_tools()
+    try:
+        from build123d import Box as _Box  # import já aquecido se algo validou antes
+
+        validador = "pronto"
+    except Exception:
+        validador = "indisponivel"
     return {
         "ok": True,
         "utc": utcnow(),
         "ponte": {"conectada": bridge.get("connected", False), "ferramentas": len(bridge.get("tools", []))},
         "partes": len(part_index()),
+        "validador": validador,
     }
 
 
@@ -1091,6 +1105,64 @@ async def mcp_endpoint(request: Request) -> Response:
 @app.get("/mcp")
 async def mcp_get() -> dict[str, Any]:
     return {"erro": "use POST para chamadas MCP (streamable-http)"}
+
+
+# ------------------------------------------------------------------ estático
+#
+# O núcleo também serve o app compilado (Chili3D) e o painel em /flow/. Antes
+# isso era um nginx em outro container; com os dois no mesmo processo, a regra
+# do PluginManager — `?plugin=` precisa ter o MESMO host da página — fica
+# satisfeita de graça, sem `location ^~` nem alias.
+#
+# A ORDEM IMPORTA, e é frágil: os mounts são casados na ordem de registro, e o
+# mount em "/" engole tudo o que não foi casado antes dele. `/flow` vem primeiro
+# por isso, e este bloco é o ÚLTIMO do arquivo de propósito — se alguém mover
+# rotas da API para baixo dele, a API some silenciosamente (o mount responde
+# index.html com 200 no lugar de 404 e ninguém percebe o estrago).
+#
+# Trade-off assumido: uvicorn não é nginx. Para um usuário numa LAN serve, e
+# continua sem gzip (o nginx também não tinha). Se o uso crescer, um proxy na
+# frente volta a ser necessário.
+
+STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", "/app/static"))
+DIST_DIR = STATIC_ROOT / "dist"
+FLOW_DIR = STATIC_ROOT / "flow"
+
+IMUTAVEIS = re.compile(r"\.(?:wasm|js|css)$")
+
+
+@app.middleware("http")
+async def cache_estatico(request: Request, call_next):
+    """Cache dos assets imutáveis e `no-store` no painel: o que o nginx fazia.
+
+    Defensivo de propósito. Este middleware abraça TODA requisição, inclusive
+    as da API e do MCP: se ele levantar exceção, derruba o núcleo inteiro. Por
+    isso qualquer falha é engolida e a resposta passa intocada.
+    """
+    response = await call_next(request)
+
+    try:
+        caminho = request.url.path
+        if caminho.startswith("/flow"):
+            response.headers["Cache-Control"] = "no-store"
+        elif IMUTAVEIS.search(caminho):
+            response.headers["Cache-Control"] = "public, max-age=604800"
+    except Exception:
+        pass
+
+    return response
+
+
+if not DIST_DIR.is_dir():
+    # Sem o app compilado a stack sobe, mas o kiosk abre em página em branco —
+    # o pior modo de falha para diagnosticar. Melhor avisar alto e cedo.
+    print("[core] AVISO: %s não existe — o app não será servido" % DIST_DIR, flush=True)
+else:
+    if FLOW_DIR.is_dir():
+        app.mount("/flow", StaticFiles(directory=FLOW_DIR), name="flow")
+    else:
+        print("[core] AVISO: %s não existe — o painel não será servido" % FLOW_DIR, flush=True)
+    app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="app")
 
 
 if __name__ == "__main__":

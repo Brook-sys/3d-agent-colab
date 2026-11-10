@@ -10,39 +10,44 @@ geometria que foi arquivada (STEP real, exportado pelo kernel OCCT do
 Chili3D), e as medições vêm de um portal independente em Python.
 
 ```
-instrução ──▶ agente ──▶ ponte ──▶ página Chili3D (kiosk headless)
-                │                        │  modela, paramétrico
-                │                        ▼
-                │                 export_nodes (.step)
-                │                        │  download do navegador
-                │                        ▼
-                └──▶ núcleo (FastAPI) ◀─ captura /data/capturas
-                        │  arquiva v000N + git
-                        ▼
-                validação FDM (build123d/OCP, processo isolado)
-                        │  envelope, volume, topologia, massa
-                        ▼
-                registro /parts/<slug>/vN/  ──▶ painel web + fila de conversa
+instrução ──▶ agente ──▶ ponte ──▶ kiosk Chromium headless (container session)
+                 │          ▲          │  app e painel vêm do núcleo
+                 │          └──────────┤  (mesmo host: satisfaz o PluginManager)
+                 │                     ▼
+                 │              export_nodes (.step) → download do navegador
+                 │                     │
+                 └──▶ núcleo (FastAPI) ◀┘ captura /data/capturas por nome único
+                         │  arquiva v000N + valida + commita
+                         ▼
+                 validação FDM (build123d/OCP, processo isolado)
+                         │  envelope, volume, topologia, massa
+                         ▼
+                 registro /parts/<slug>/vN/  ──▶ painel no navegador + fila de conversa
 ```
 
 ## O que está no repositório
 
 | caminho | o que é |
 |---|---|
-| `core/` | Núcleo FastAPI: REST + MCP + arquivo de registro + validação FDM |
+| `core/` | Núcleo FastAPI: REST + MCP + arquivo de registro + validação FDM. Também serve o app Chili3D e o painel (estático) |
 | `session/` | Ponte WebSocket/HTTP + kiosk Chromium + companheiro CDP |
-| `web/` | nginx: serve o Chili3D compilado e o painel em `/flow/` |
 | `plugin-flow/` | Painel colaborativo (plugin Chili3D puro, sem build) |
 | `partes/` | Semente do registro: as peças de teste do conjunto mínimo |
 | `deploy/` | Build local das imagens e servidor de arquivos (canal legado) |
-| `.github/workflows/imagens.yml` | Constrói e publica as três imagens no GHCR |
-| `chili3d.ref` | Commit do Chili3D compilado dentro da imagem `web` |
+| `.github/workflows/imagens.yml` | Constrói e publica as duas imagens no GHCR |
+| `chili3d.ref` | Commit do Chili3D compilado dentro da imagem `core` |
 | `docker-compose.yml` | A stack, apontando para as imagens do GHCR |
 
 `chili3d-upstream/` **não** faz parte deste versionamento: é um clone do
-Chili3D usado apenas para desenvolvimento. A imagem `web` **não** usa esse
+Chili3D usado apenas para desenvolvimento. A imagem `core` **não** usa esse
 clone — o Dockerfile baixa o commit fixado em `chili3d.ref` do repositório
 oficial e compila dentro do build.
+
+Havia um `web/` de nginx que servia os arquivos estáticos. Ele **não existe
+mais**: o núcleo passou a servir o app e o painel no mesmo processo. O motivo
+prático foi uma regra do `PluginManager` do Chili3D — `?plugin=` precisa ter o
+mesmo host da página —, e o custo foi trocar o nginx por uvicorn. Ver "Notas de
+operação".
 
 ## Pré-requisitos
 
@@ -55,23 +60,31 @@ oficial e compila dentro do build.
 
 ## Imagens e deploy
 
-As três imagens são construídas pelo GitHub Actions e publicadas no GHCR:
+As duas imagens são construídas pelo GitHub Actions e publicadas no GHCR:
 
 ```
-ghcr.io/brook-sys/3d-agent-colab-web      nginx + Chili3D 0.8.0 + painel /flow/
-ghcr.io/brook-sys/3d-agent-colab-session  Chromium headless + ponte WebSocket
 ghcr.io/brook-sys/3d-agent-colab-core     Python 3.12 + build123d + API/MCP
+                                          + app Chili3D e painel (estático)
+ghcr.io/brook-sys/3d-agent-colab-session  Chromium headless + ponte WebSocket
 ```
 
 Nada é compilado no host Docker: ele só faz o pull. O workflow dispara em push
-na `main` que mexe em `core/`, `session/`, `web/`, `plugin-flow/`, `partes/`,
+na `main` que mexe em `core/`, `session/`, `plugin-flow/`, `partes/`,
 `chili3d.ref` ou no próprio workflow — e também por disparo manual. Cada build
 publica duas tags: `main` (a que o compose usa) e `sha-<curto>` (para voltar a
 uma versão conhecida sem rebuildar). O cache é por imagem (`scope=core`,
-`session`, `web`), então mudar o painel não repaga o build do Chili3D.
+`session`), então mudar o painel não repaga o build do Chili3D.
+
+O pacote leva **hífen**, não barra (`3d-agent-colab-core`, e não
+`3d-agent-colab/core`): é a convenção que o picofarm e o orca-slicer-api já
+usam. Duas consequências que já queimaram nesta fase: a URL do `PATCH` de
+visibilidade não leva percent-encode (o `%2F` é da variante com barra e dá 404),
+e o nome no `docker-compose.yml` tem de ser escrito completo — apontar
+`.../3d-agent-colab/web:main` no compose referencia uma imagem que nunca foi
+publicada, o host não tem o que puxar e a stack não recria nada, em silêncio.
 
 **Atualizar o Chili3D**: troque o SHA em `chili3d.ref` (e a nota de versão) e
-dê push. O app é recompilado do commit novo no build da imagem `web`. Nenhum
+dê push. O app é recompilado do commit novo no build da imagem `core`. Nenhum
 binário entra neste repositório, e o fonte correspondente continua público no
 repositório oficial do Chili3D — que é a obrigação da licença AGPL-3.0 dele.
 
@@ -83,7 +96,7 @@ containers. Imagem nova só entra em vigor **recreando o container** — o
 ### Ciclo curto, sem CI
 
 ```sh
-# builda as três imagens localmente com os MESMOS Dockerfiles do workflow
+# builda as duas imagens localmente com os MESMOS Dockerfiles do workflow
 ./deploy/build-local.sh
 
 # sobe a stack com as imagens locais em vez do GHCR
@@ -93,22 +106,33 @@ docker compose -f docker-compose.yml -f deploy/compose.local.yml up -d
 Para aplicar uma mudança de código sem passar pelo CI, existe ainda o canal
 `FONTE_URL` (legado): sirva o projeto com `node deploy/servidor-arquivos.mjs
 "$PWD" 8099`, empacote com `sh deploy/empacotar.sh`, aponte `FONTE_URL` no
-ambiente dos containers e reinicie. Os entrypoints atualizam `/app` e o painel
-por cima do que está na imagem antes de subir. É útil para depurar, e é
-exatamente o modo de falha que o GHCR elimina: o que está na imagem passa a ser
-a verdade.
+ambiente dos containers e reinicie. Os entrypoints atualizam o `/app` do núcleo
+(`main.py`, `entrypoint.sh`, `requirements.txt`) e os arquivos da sessão por
+cima do que está na imagem. **O app Chili3D e o painel NÃO entram nesse canal**:
+eles são copiados/compilados durante o build da imagem, então mudar o painel
+exige imagem nova — `./deploy/build-local.sh` no ciclo curto, ou commit + CI.
+É útil para depurar, e é exatamente o modo de falha que o GHCR elimina: o que
+está na imagem passa a ser a verdade.
 
 ### Portas
 
 | porta | o que | exposição |
 |---|---|---|
-| 8080 | Chili3D + painel no navegador | host |
+| 8080 | app Chili3D + painel, para o navegador | host |
 | 9001 | REST + MCP do núcleo | host |
 | 17373 | ponte WebSocket | **só 127.0.0.1** |
 | 17400 | relay HTTP da ponte | **só 127.0.0.1** |
 
+8080 e 9001 são **a mesma porta do container** (o núcleo escuta 9001), publicada
+duas vezes: 8080 é o endereço "bonito" para quem abre o app, e 9001 existe
+porque o painel precisa bater no núcleo pelo `location.hostname` — ver a seção
+do navegador. Não é redundância, é o que faz o painel funcionar nos dois
+acessos.
+
 O par 17373/17400 é controle remoto sem autenticação sobre a sessão do
-navegador. Fica preso ao loopback por isso.
+navegador. Fica preso ao loopback por isso — e, mesmo preso, ele ainda é um
+risco real para o kiosk: uma página aberta na máquina do Docker com `?bridge=`
+assume a ponte e derruba o kiosk (código 4002).
 
 ## Usando
 
@@ -141,15 +165,32 @@ enviar_mensagem(texto="v0001 pronta: 10,24 g de PLA")
 
 ### O usuário (navegador)
 
-Abra `http://SEU-HOST:8080/?bridge=&plugin=http://web/flow/&part=suporte-l&painel=1&api=http://core:9001`.
+Abra `http://SEU-HOST:8080/?plugin=http://SEU-HOST:8080/flow/&part=suporte-l&painel=1`.
 O painel mostra as variáveis paramétricas com controles deslizantes, os
 comentários ancorados na seleção atual, a fila de conversa e o botão de
 publicar.
 
+Dois parâmetros faltam nessa URL de propósito, e nenhum dos dois por esquecimento:
+
+- **sem `bridge=`** — a página monta o endereço da ponte como
+  `ws://127.0.0.1:17373/ws`, com o host fixo no código do app. No seu navegador
+  isso aponta para a *sua* máquina, não para o container. Pior: se você abrir a
+  página na própria máquina do Docker, a sua aba assume a ponte e o servidor
+  derruba o kiosk com código 4002 ("outra aba assumiu a ponte") — a página do
+  kiosk para de receber chamadas e a publicação morre. O painel não precisa da
+  ponte no seu navegador: o estado dela vem de `GET /ponte/estado` no núcleo, e
+  o "publicar" vai pelo núcleo, que fala com o kiosk pelo lado do servidor.
+- **sem `api=`** — o painel cai no fallback `http://${location.hostname}:9001`
+  (`plugin-flow/src/extension.js:16`), que na sua máquina vira
+  `http://SEU-HOST:9001`. É por isso que o núcleo publica 9001 no host, e não
+  apenas 8080 (ver "Portas").
+
 `?plugin=` **precisa** ser URL absoluta e do mesmo host da página: o
 `PluginManager` faz `new URL(valor)` e compara o host — com caminho relativo
 ele lança, e o `catch` do build chama `alert()`, que congela o renderer
-headless (o kiosk não tem ninguém para clicar "OK").
+headless (o kiosk não tem ninguém para clicar "OK"). Antes do nginx sair, isso
+era resolvido com `location ^~` e dois hosts; agora o app e o painel são
+servidos pelo mesmo processo, e a regra fica satisfeita por construção.
 
 ## Registro de peças
 
@@ -197,12 +238,12 @@ revisão. O `validacao.json` carrega essa limitação em `limitacoes`.
 
 ## Licenças
 
-O app servido pela imagem `web` é o **Chili3D**, licenciado em **AGPL-3.0**
+O app servido pela imagem `core` é o **Chili3D**, licenciado em **AGPL-3.0**
 (repositório oficial: `xiangechen/chili3d`, commit fixado em `chili3d.ref`).
 Ele é compilado do fonte a cada build — o binário que roda no kiosk é
 derivado daquele commit, e o fonte correspondente está público lá.
 
-O código **deste** repositório (`core/`, `session/`, `web/`, `plugin-flow/`)
+O código **deste** repositório (`core/`, `session/`, `plugin-flow/`)
 não tem licença declarada, e isso é uma escolha em aberto, não um esquecimento:
 sem um arquivo `LICENSE`, o padrão legal é "todos os direitos reservados".
 Definir uma é tarefa do dono do repositório.
@@ -231,6 +272,32 @@ Definir uma é tarefa do dono do repositório.
   o ezdxf, puxado pelo build123d, precisa escrever `~/.config`.
 - **Logs Docker têm prefixo binário de 8 bytes** — filtre
   `[\x00-\x08\x0e-\x1f]` antes de ler.
+- **`uvicorn` não é nginx, e agora ele serve o app.** O `web/` de nginx saiu e
+  o núcleo passou a servir o dist do Chili3D e o painel. O que se perdeu de
+  fato: **gzip inexistente** (o nginx também não tinha, então nada mudou aqui),
+  `sendfile`, e uma configuração de cache que era testada há anos. O que se
+  ganhou: uma origem só, sem `location ^~` e sem alias. A troca foi consciente e
+  é a maior dívida desta mudança — se o app passar a servir muitos usuários, um
+  proxy na frente volta a ser necessário.
+- **A ordem dos `mount` em `main.py` é frágil, e o último engole tudo.** Os
+  mounts são casados na ordem de registro: `app.mount("/", StaticFiles(dist))`
+  responde `index.html` com **200** para qualquer caminho que veio antes dele
+  sem match. Ou seja: se alguém mover uma rota da API para depois do bloco
+  estático, a rota não dá 404 — ela devolve o app, e o defeito é silencioso. O
+  bloco estático é o **último** do arquivo exatamente por isso, e a ordem atual
+  (`/arquivos` → `/mcp` → `/flow` → `/`) deve ser reconferida a cada mexida no
+  `main.py`. No nginx isso era o `location ^~`, que não dependia de posição.
+- **O núcleo e o registro de peças dividem o mesmo cgroup.** Antes o kernel
+  geométrico e o servidor estático viviam em containers separados; hoje um
+  estouro de memória no núcleo leva a validação junto. O inverso também: uma
+  validação grande pode fazer o servidor parar de responder. **O limite de
+  memória do container (2,5 GB no host) não foi medido contra um caso real** —
+  é um número de configuração, não uma medição.
+- **Por que não um container só.** Juntar o kiosk no núcleo foi considerado e
+  descartado por dois motivos: um OOM do Chromium mataria a API por cgroup
+  compartilhado, e o loop de restart do kiosk (a cada queda do navegador)
+  levaria a API junto. Dois containers é o meio-termo; o preço é que o STEP
+  continua dando volta pelo `GET /capturas`, em HTTP, dentro da rede do compose.
 
 ### Conferindo o que está rodando
 

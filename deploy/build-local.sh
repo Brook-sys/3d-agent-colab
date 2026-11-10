@@ -1,5 +1,5 @@
 #!/bin/sh
-# Constrói as três imagens localmente, com os MESMOS Dockerfiles que o workflow
+# Constrói as duas imagens localmente, com os MESMOS Dockerfiles que o workflow
 # .github/workflows/imagens.yml usa.
 #
 # O caminho oficial de publicação é o GitHub Actions (push na main → GHCR); este
@@ -17,7 +17,7 @@ set -eu
 RAIZ="$(cd "$(dirname "$0")/.." && pwd)"
 TAG="${TAG:-dev}"
 
-for nome in core session web; do
+for nome in core session; do
     echo "==> $nome (tag $TAG)"
     docker build \
         -t "fluxo-$nome:$TAG" \

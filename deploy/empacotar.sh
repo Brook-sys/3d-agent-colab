@@ -1,9 +1,22 @@
 #!/bin/sh
-# Empacota o que vai para as imagens. Rode antes de cada deploy.
+# Empacota o que o canal FONTE_URL baixa nos containers. Rode antes de cada deploy.
 #
 # O host Docker NÃO tem acesso ao diretório deste projeto (é outra máquina), então
 # o caminho é: empacotar aqui → servir por HTTP → os containers baixam no build.
 # Nada de caminho absoluto do host entra no Compose.
+#
+# O que ENTRA aqui é só o que algum entrypoint realmente busca:
+#   core.tar.gz     → core/entrypoint.sh extrai em /app (main.py, entrypoint.sh,
+#                     requirements.txt)
+#   session/<arquivo> → session/start.sh copia para /app
+#
+# O que NÃO entra, e por quê:
+#   O app Chili3D e o painel (estáticos) são compilados/copiados DURANTE o build
+#   da imagem — o core/Dockerfile busca o dist do commit fixado em chili3d.ref e
+#   copia plugin-flow/. Não existe mais canal HTTP para atualizá-los: mudar o
+#   painel exige imagem nova (commit + workflow, ou ./deploy/build-local.sh).
+#   Havia pacotes flow.tar.gz, dist.tar.gz e web.tar.gz que nenhum entrypoint
+#   consumia — saíram. Também havia um web/ de nginx, que não existe mais.
 set -eu
 
 RAIZ="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,19 +30,10 @@ tar czf "$PAC/core.tar.gz" -C "$RAIZ/core" main.py entrypoint.sh requirements.tx
 # 2. sessão (ponte + kiosk + companheiro CDP)
 tar czf "$PAC/session.tar.gz" -C "$RAIZ/session" bridge-server.mjs start.sh package.json kiosk-cdp.mjs
 
-# 2. site: chili3d buildado + plugin do painel
-tar czf "$PAC/flow.tar.gz" -C "$RAIZ/plugin-flow" .
-if [ -d "$RAIZ/chili3d-upstream/dist" ]; then
-    tar czf "$PAC/dist.tar.gz" -C "$RAIZ/chili3d-upstream" dist
-else
-    echo "AVISO: chili3d-upstream/dist não existe — o site vai sem o app buildado"
-    : > "$PAC/dist.tar.gz"
-fi
-
-# 2b. servidor web (config do nginx + script de boot)
-tar czf "$PAC/web.tar.gz" -C "$RAIZ/web" default.conf start.sh
-
-# 4. registro de peças inicial
+# 3. registro de peças inicial
+#    Nenhum entrypoint busca este arquivo: a imagem core já semeia /parts da
+#    cópia que leva em /seed/partes. Ele existe para semear à mão um volume
+#    novo a partir de outro container (docker cp).
 tar czf "$PAC/partes.tar.gz" -C "$RAIZ" partes
 
 ls -la "$PAC"

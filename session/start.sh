@@ -8,7 +8,19 @@ set -u
 LOG="[session]"
 DATA_DIR="${BRIDGE_DATA_DIR:-/data}"
 FONTE_URL="${FONTE_URL:-}"
-KIOSK_URL="${KIOSK_URL:-http://web/?bridge=&plugin=http://web/flow/&part=espacador&painel=1&api=http://core:9001}"
+# O kiosk abre o app servido pelo PRÓPRIO núcleo: antes havia um nginx em
+# outro container (`http://web/`), e o PluginManager exigia que `?plugin=` e a
+# página estivessem no mesmo host para aceitar o plugin. Servindo os dois pelo
+# core, a regra fica satisfeita de graça.
+#
+# `api=` foi REMOVIDO de propósito. Sem ele o painel cai no fallback
+# `http://${location.hostname}:9001` (extension.js:16), que acerta os alvos:
+# no kiosk, hostname = core → http://core:9001; no navegador do usuário,
+# hostname = máquina do Docker → http://<máquina>:9001. Com `api=` fixo em
+# http://core:9001 o kiosk funcionaria e o navegador do usuário quebraria —
+# `core` não resolve fora da rede do compose. É por isso que o core publica
+# 9001 no host também, e não só 8080.
+KIOSK_URL="${KIOSK_URL:-http://core:9001/?bridge=&plugin=http://core:9001/flow/&part=espacador&painel=1}"
 mkdir -p "$DATA_DIR"
 
 # ------------------------------------------------- 1. atualizar da fonte
