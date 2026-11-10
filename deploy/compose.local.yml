@@ -4,12 +4,12 @@
 #   docker compose -f docker-compose.yml -f deploy/compose.local.yml up -d
 #
 # `pull_policy: never` é o ponto: sem ele, o compose tentaria baixar
-# fluxo-<nome>:dev do GHCR, onde essas tags não existem.
+# 3d-agent-colab-<nome>:dev do GHCR, onde essas tags não existem.
 services:
   core:
-    image: fluxo-core:dev
+    image: 3d-agent-colab-core:dev
     pull_policy: never
 
   session:
-    image: fluxo-session:dev
+    image: 3d-agent-colab-session:dev
     pull_policy: never

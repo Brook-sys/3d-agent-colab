@@ -1,5 +1,5 @@
 /**
- * Plugin "Fluxo de Peças" (JavaScript puro, sem build).
+ * Painel "3D Agent Colab" (JavaScript puro, sem build).
  *
  * Painel colaborativo dentro do Chili3D:
  *   - lista as variáveis do documento com controles deslizantes (fonte da verdade paramétrica)
@@ -41,7 +41,7 @@ function toast(message) {
     try {
         PubSub.default.pub("showToast", message);
     } catch {
-        console.log("[fluxo]", message);
+        console.log("[painel]", message);
     }
 }
 
@@ -145,7 +145,7 @@ let notesBox = null;
 
 function buildPanel() {
     panel = el("div", {
-        id: "flow-panel",
+        id: "painel-root",
         style: {
             position: "fixed",
             top: "12px",
@@ -170,7 +170,7 @@ function buildPanel() {
             style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" },
         },
         [
-            el("strong", { text: "Fluxo de Peças" }),
+            el("strong", { text: "3D Agent Colab" }),
             el(
                 "button",
                 {
@@ -184,7 +184,7 @@ function buildPanel() {
                         fontSize: "11px",
                     },
                     onclick: (clickEvent) => {
-                        const body = panel.querySelector("#flow-body");
+                        const body = panel.querySelector("#painel-body");
                         const escondido = body.style.display === "none";
                         body.style.display = escondido ? "block" : "none";
                         clickEvent.target.textContent = escondido ? "recolher" : "expandir";
@@ -195,7 +195,7 @@ function buildPanel() {
         ],
     );
 
-    const body = el("div", { id: "flow-body" });
+    const body = el("div", { id: "painel-body" });
 
     versionLabel = el("div", { text: "peça: …", style: { color: "#8fa3bd", marginBottom: "6px" } });
     bridgeLabel = el("div", { text: "ponte: …", style: { color: "#8fa3bd", marginBottom: "10px" } });
@@ -491,44 +491,44 @@ async function reportState() {
 
 /* --------------------------------------------------------------- plugin */
 
-class FlowPanelCommand {
+class PainelCommand {
     async execute() {
         if (panel) panel.style.display = panel.style.display === "none" ? "block" : "none";
         return Promise.resolve();
     }
 }
 
-const FlowPlugin = {
-    commands: [FlowPanelCommand],
+const PainelPlugin = {
+    commands: [PainelCommand],
     ribbons: [
         {
             tabName: "ribbon.tab.manager",
-            groups: [{ groupName: "ribbon.group.other", items: ["flow.panel"] }],
+            groups: [{ groupName: "ribbon.group.other", items: ["painel.panel"] }],
         },
     ],
     guide: [
         {
-            name: "Painel do Fluxo",
+            name: "Painel do 3D Agent Colab",
             content:
-                "O painel Fluxo de Peças mostra as variáveis paramétricas do documento com controles deslizantes, permite ancorar comentários na seleção atual, conversar com o agente e publicar uma versão (STEP + documento).",
+                "O painel do 3D Agent Colab mostra as variáveis paramétricas do documento com controles deslizantes, permite ancorar comentários na seleção atual, conversar com o agente e publicar uma versão (STEP + documento).",
         },
     ],
     i18nResources: [
         {
             language: "en",
             display: "English",
-            translation: { "command.flow.panel": "Part Flow" },
+            translation: { "command.painel.panel": "3D Agent Colab" },
         },
         {
             language: "zh-CN",
             display: "简体中文",
-            translation: { "command.flow.panel": "零件流程" },
+            translation: { "command.painel.panel": "3D Agent Colab" },
         },
         {
             language: "pt-BR",
             display: "Português (Brasil)",
             translation: {
-                "command.flow.panel": "Fluxo de Peças",
+                "command.painel.panel": "3D Agent Colab",
                 "ribbon.tab.manager": "Gerenciar",
                 "ribbon.group.other": "Outros",
             },
@@ -536,8 +536,8 @@ const FlowPlugin = {
     ],
 };
 
-CommandStore.registerCommand(FlowPanelCommand, {
-    key: "flow.panel",
+CommandStore.registerCommand(PainelCommand, {
+    key: "painel.panel",
     icon: { type: "path", value: "icon.svg" },
 });
 
@@ -558,7 +558,7 @@ if (PAINEL_LIGADO) {
     refreshVersion();
     refreshBridge();
     reportState();
-    console.log(`[fluxo] painel ativo · api=${API} · parte=${SLUG}`);
+    console.log(`[painel] painel ativo · api=${API} · parte=${SLUG}`);
 }
 
-export default FlowPlugin;
+export default PainelPlugin;

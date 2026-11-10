@@ -20,7 +20,7 @@ FONTE_URL="${FONTE_URL:-}"
 # http://core:9001 o kiosk funcionaria e o navegador do usuário quebraria —
 # `core` não resolve fora da rede do compose. É por isso que o core publica
 # 9001 no host também, e não só 8080.
-KIOSK_URL="${KIOSK_URL:-http://core:9001/?bridge=&plugin=http://core:9001/flow/&part=espacador&painel=1}"
+KIOSK_URL="${KIOSK_URL:-http://core:9001/?bridge=&plugin=http://core:9001/painel/&part=espacador&painel=1}"
 mkdir -p "$DATA_DIR"
 
 # ------------------------------------------------- 1. atualizar da fonte

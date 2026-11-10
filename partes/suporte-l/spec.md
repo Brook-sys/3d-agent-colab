@@ -1,6 +1,6 @@
 # Suporte em L — especificação
 
-Peça de teste genérica. Não é um produto: serve para exercitar o fluxo completo
+Peça de teste genérica. Não é um produto: serve para exercitar o pipeline completo
 (intenção → parâmetros → construção → validação → publicação).
 
 ## Intenção

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Núcleo do fluxo de peças.
+# Núcleo do 3D Agent Colab.
 #
 # A imagem já traz /app, /venv e /seed (cópia inicial do registro) — o container
 # sobe sozinho, sem depender da máquina de desenvolvimento. Se FONTE_URL estiver
@@ -78,15 +78,15 @@ ARGS="-m uvicorn main:app --host 0.0.0.0 --port ${PORT:-9001} --log-level info"
 # O processo cai para uid 1000, mas HOME continua /root (do root): o ezdxf,
 # puxado pelo build123d, tenta escrever ~/.config/ezdxf/ezdxf.ini e a validação
 # geométrica morre com Permission denied. Um HOME gravável desempata isso.
-export FLUXO_HOME="${FLUXO_HOME:-/tmp/fluxo-home}"
-mkdir -p "$FLUXO_HOME/.config" 2>/dev/null || true
-export HOME="$FLUXO_HOME"
-export XDG_CONFIG_HOME="$FLUXO_HOME/.config"
+export COLAB_HOME="${COLAB_HOME:-/tmp/colab-home}"
+mkdir -p "$COLAB_HOME/.config" 2>/dev/null || true
+export HOME="$COLAB_HOME"
+export XDG_CONFIG_HOME="$COLAB_HOME/.config"
 if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
     # SÓ o /parts (e o HOME, que é minúsculo). O /venv e o /app já vêm com o
     # dono certo desde a imagem — `COPY --chown` e o `chown` na camada do venv.
     #
-    # Estava `chown -R /parts /venv /app /tmp/fluxo-home` e isso custou mais de
+    # Estava `chown -R /parts /venv /app /tmp/colab-home` e isso custou mais de
     # 10 minutos de boot neste host: no overlayfs, trocar o dono de um arquivo
     # exige copiá-lo antes para a camada superior, e o venv são dezenas de
     # milhares de arquivos (build123d + OCP). A stack subiu e ficou 10 minutos
@@ -96,7 +96,7 @@ if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
     # O /parts ainda precisa: um volume novo nasce com dono root e a semente é
     # copiada com `cp -a`. Basta o diretório topo — o conteúdo já vem certo.
     chown "$TARGET_UID:$TARGET_GID" /parts 2>/dev/null || true
-    chown -R "$TARGET_UID:$TARGET_GID" "$FLUXO_HOME" 2>/dev/null || true
+    chown -R "$TARGET_UID:$TARGET_GID" "$COLAB_HOME" 2>/dev/null || true
     echo "$LOG reexecutando como uid $TARGET_UID"
     exec setpriv --reuid="$TARGET_UID" --regid="$TARGET_GID" --clear-groups "$VENV_PY" $ARGS
 fi

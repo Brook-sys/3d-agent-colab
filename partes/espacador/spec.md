@@ -5,7 +5,7 @@ Peça de teste genérica, segunda do conjunto mínimo.
 ## Intenção
 
 Bucha cilíndrica Ø8 × 10 mm com furo de passagem Ø3,2 mm, para separar duas
-chapas aparafusadas. Serve para exercitar o fluxo numa geometria de revolução.
+chapas aparafusadas. Serve para exercitar o pipeline numa geometria de revolução.
 
 ## Parâmetros
 

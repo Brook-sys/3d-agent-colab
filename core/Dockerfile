@@ -1,4 +1,4 @@
-# Núcleo do fluxo — e agora também servidor do app: API + MCP + registro de
+# Núcleo do 3D Agent Colab — e agora também servidor do app: API + MCP + registro de
 # peças + validação FDM + estático (Chili3D e painel).
 #
 # ANTES disto eram duas imagens: esta e uma de nginx que servia os arquivos.
@@ -84,7 +84,7 @@ RUN python -m venv /venv \
 COPY --chown=1000:1000 core/ /app/
 COPY --chown=1000:1000 partes/ /seed/partes/
 COPY --chown=1000:1000 --from=builder /src/dist /app/static/dist
-COPY --chown=1000:1000 plugin-flow/ /app/static/flow/
+COPY --chown=1000:1000 painel/ /app/static/painel/
 
 # 1. sintaxe: `compileall` falha (e o build junto) em erro de sintaxe, o que a
 #    máquina de desenvolvimento não pega — ela não tem python. Sem este passo,

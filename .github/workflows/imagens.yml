@@ -21,7 +21,7 @@ on:
     paths:
       - "core/**"
       - "session/**"
-      - "plugin-flow/**"
+      - "painel/**"
       - "partes/**"
       - "chili3d.ref"
       - ".github/workflows/imagens.yml"

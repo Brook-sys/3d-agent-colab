@@ -8,7 +8,7 @@
 # antes de dar push — a falha aparece aqui em minutos, não só no Actions.
 #
 # Uso:
-#   ./deploy/build-local.sh                    # fluxo-<nome>:dev
+#   ./deploy/build-local.sh                    # 3d-agent-colab-<nome>:dev
 #   TAG=sha-1a2b3c4 ./deploy/build-local.sh    # mesma tag que o GHCR publica
 #
 # Depois: docker compose -f docker-compose.yml -f deploy/compose.local.yml up -d
@@ -20,10 +20,10 @@ TAG="${TAG:-dev}"
 for nome in core session; do
     echo "==> $nome (tag $TAG)"
     docker build \
-        -t "fluxo-$nome:$TAG" \
+        -t "3d-agent-colab-$nome:$TAG" \
         -f "$RAIZ/$nome/Dockerfile" \
         "$RAIZ"
 done
 
 echo "prontas:"
-docker images | grep "^fluxo-" || true
+docker images | grep "^3d-agent-colab-" || true

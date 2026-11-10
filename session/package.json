@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "1.0.0",
-  "description": "Ponte Chili3D + navegador kiosk para o fluxo de peças paramétricas",
+  "description": "Ponte Chili3D + navegador kiosk para o peças 3D paramétricas (3D Agent Colab)",
   "dependencies": {
     "ws": "^8.18.0"
   }

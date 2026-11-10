@@ -1,6 +1,6 @@
-# Fluxo de Peças 3D
+# 3D Agent Colab
 
-Um fluxo autônomo de criação de peças 3D paramétricas: uma instrução digitada
+Criação autônoma de peças 3D paramétricas: uma instrução digitada
 (no terminal do agente **ou** no navegador) se transforma numa peça modelada,
 publicada, medida e validada para impressão — tudo dentro de containers
 gerenciados por um Portainer.
@@ -31,7 +31,7 @@ instrução ──▶ agente ──▶ ponte ──▶ kiosk Chromium headless (
 |---|---|
 | `core/` | Núcleo FastAPI: REST + MCP + arquivo de registro + validação FDM. Também serve o app Chili3D e o painel (estático) |
 | `session/` | Ponte WebSocket/HTTP + kiosk Chromium + companheiro CDP |
-| `plugin-flow/` | Painel colaborativo (plugin Chili3D puro, sem build) |
+| `painel/` | Painel colaborativo (plugin Chili3D puro, sem build) |
 | `partes/` | Semente do registro: as peças de teste do conjunto mínimo |
 | `deploy/` | Build local das imagens e servidor de arquivos (canal legado) |
 | `.github/workflows/imagens.yml` | Constrói e publica as duas imagens no GHCR |
@@ -51,8 +51,13 @@ operação".
 
 ## Pré-requisitos
 
-- Um Portainer com um ambiente Docker local (id 3) e uma stack (id 65) já
-  criada — o deploy é feito pelo MCP do Portainer, não pelo `docker` CLI.
+- Um Portainer com um ambiente Docker local e uma stack (**nome**: `3d-agent-colab`).
+  O deploy é feito pelo MCP do Portainer, não pelo `docker` CLI.
+- Os diretórios de dados no host Docker:
+  ```sh
+  mkdir -p /opt/3d-agent-colab/parts /opt/3d-agent-colab/session
+  chown 1000:1000 /opt/3d-agent-colab/parts   # o núcleo roda como uid 1000
+  ```
 - Impressora de referência: **Elegoo Neptune 4**, bico 0,4 mm, volume
   220 × 220 × 250 mm, filamentos PLA/PETG.
 - Opcional, só para iterar sem rebuildar: uma máquina de desenvolvimento
@@ -69,7 +74,7 @@ ghcr.io/brook-sys/3d-agent-colab-session  Chromium headless + ponte WebSocket
 ```
 
 Nada é compilado no host Docker: ele só faz o pull. O workflow dispara em push
-na `main` que mexe em `core/`, `session/`, `plugin-flow/`, `partes/`,
+na `main` que mexe em `core/`, `session/`, `painel/`, `partes/`,
 `chili3d.ref` ou no próprio workflow — e também por disparo manual. Cada build
 publica duas tags: `main` (a que o compose usa) e `sha-<curto>` (para voltar a
 uma versão conhecida sem rebuildar). O cache é por imagem (`scope=core`,
@@ -120,8 +125,8 @@ está na imagem passa a ser a verdade.
 |---|---|---|
 | 8080 | app Chili3D + painel, para o navegador | host |
 | 9001 | REST + MCP do núcleo | host |
-| 17373 | ponte WebSocket | **só 127.0.0.1** |
-| 17400 | relay HTTP da ponte | **só 127.0.0.1** |
+| 17373 | ponte WebSocket | **só a rede interna dos containers** |
+| 17400 | relay HTTP da ponte | **só a rede interna dos containers** |
 
 8080 e 9001 são **a mesma porta do container** (o núcleo escuta 9001), publicada
 duas vezes: 8080 é o endereço "bonito" para quem abre o app, e 9001 existe
@@ -129,10 +134,61 @@ porque o painel precisa bater no núcleo pelo `location.hostname` — ver a seç
 do navegador. Não é redundância, é o que faz o painel funcionar nos dois
 acessos.
 
-O par 17373/17400 é controle remoto sem autenticação sobre a sessão do
-navegador. Fica preso ao loopback por isso — e, mesmo preso, ele ainda é um
-risco real para o kiosk: uma página aberta na máquina do Docker com `?bridge=`
-assume a ponte e derruba o kiosk (código 4002).
+O par 17373/17400 **não é publicado no host** (não há `ports:` no serviço
+`session`). É controle remoto sem autenticação sobre a sessão do navegador:
+com porta no host, qualquer processo da máquina — inclusive uma página sua com
+`?bridge=`, que assume a ponte e derruba o kiosk com código 4002 — alcança.
+Sem `ports:`, só o que está na rede `3d-agent-colab` fala com a ponte, e hoje
+isso é só o núcleo. Consequência: `POST /kiosk/recarregar` mudou de endereço —
+ver "Notas de operação".
+
+### Configuração
+
+O `docker-compose.yml` traz todas as variáveis com `${VAR:-default}`, e o campo
+**Env** da stack no Portainer sobrescreve o que for específico deste deploy. A
+lista completa, com os defaults que o código aplica quando a variável não
+existe:
+
+| variável | serviço | default | para quê |
+|---|---|---|---|
+| `PARTS_ROOT` | core | `/parts` | raiz do registro de peças |
+| `BRIDGE_URL` | core | `http://session:17400` | endereço da ponte na rede interna |
+| `PORT` | core | `9001` | porta que o uvicorn escuta |
+| `PRINTER_MODEL` | core | `Elegoo Neptune 4` | impressora usada no relatório |
+| `PUID` / `PGID` | core | `1000` | uid/gid do processo (e do registro) |
+| `BRIDGE_PORT` | session | `17373` | porta WebSocket da ponte |
+| `BRIDGE_HTTP_PORT` | session | `17400` | porta HTTP da ponte |
+| `BRIDGE_DATA_DIR` | session | `/data` | capturas, perfil do Chromium, pedidos |
+| `KIOSK_URL` | session | `http://core:9001/?bridge=&plugin=http://core:9001/painel/&part=espacador&painel=1` | página que o kiosk abre |
+| `FONTE_URL` | ambos | vazio | canal legado de atualização por HTTP |
+
+Nenhuma dessas variáveis é segredo. O que **não** deve ir para o Env versionado
+é endereço da sua máquina: `FONTE_URL` existe para isso e fica vazio por
+padrão.
+
+### Dados (bind mounts)
+
+Os dois serviços escrevem em diretórios do host, não em volumes Docker:
+
+| caminho no host | montado em | contém |
+|---|---|---|
+| `/opt/3d-agent-colab/parts` | `/parts` (core) | registro de peças, `_estado/`, `.git` |
+| `/opt/3d-agent-colab/session` | `/data` (session) | perfil do Chromium, capturas `.step`, pedidos do kiosk |
+
+Escolhas por trás disso, não por acaso: o caminho é visível e faz backup com o
+resto do `/opt`; um volume Docker esconde os dados em `/var/lib/docker/volumes` e
+copia o conteúdo inteiro quando alguém mexe no dono; e o registry do GHCR fica
+só com o que é imagem — código e app —, nunca com estado.
+
+A semeadura é automática: num `/parts` vazio (bind novo de montagem), o
+`entrypoint.sh` copia a semente que a imagem traz em `/seed/partes` e grava
+`.semeadura`. Um `/parts` que já tem conteúdo **não** é sobrescrito — é assim
+que o histórico sobrevive a um redeploy. Para começar limpo de propósito,
+esvazie o diretório antes de subir a stack.
+
+O `/data` da sessão pode ser apagado à vontade quando o kiosk não está
+rodando: ele é cache de navegador (perfil + IndexedDB) e área de transferência
+do STEP. Perdê-lo custa um recarregamento de página, não uma versão publicada.
 
 ## Usando
 
@@ -165,7 +221,7 @@ enviar_mensagem(texto="v0001 pronta: 10,24 g de PLA")
 
 ### O usuário (navegador)
 
-Abra `http://SEU-HOST:8080/?plugin=http://SEU-HOST:8080/flow/&part=suporte-l&painel=1`.
+Abra `http://SEU-HOST:8080/?plugin=http://SEU-HOST:8080/painel/&part=suporte-l&painel=1`.
 O painel mostra as variáveis paramétricas com controles deslizantes, os
 comentários ancorados na seleção atual, a fila de conversa e o botão de
 publicar.
@@ -181,7 +237,7 @@ Dois parâmetros faltam nessa URL de propósito, e nenhum dos dois por esquecime
   ponte no seu navegador: o estado dela vem de `GET /ponte/estado` no núcleo, e
   o "publicar" vai pelo núcleo, que fala com o kiosk pelo lado do servidor.
 - **sem `api=`** — o painel cai no fallback `http://${location.hostname}:9001`
-  (`plugin-flow/src/extension.js:16`), que na sua máquina vira
+  (`painel/src/extension.js:16`), que na sua máquina vira
   `http://SEU-HOST:9001`. É por isso que o núcleo publica 9001 no host, e não
   apenas 8080 (ver "Portas").
 
@@ -243,7 +299,7 @@ O app servido pela imagem `core` é o **Chili3D**, licenciado em **AGPL-3.0**
 Ele é compilado do fonte a cada build — o binário que roda no kiosk é
 derivado daquele commit, e o fonte correspondente está público lá.
 
-O código **deste** repositório (`core/`, `session/`, `plugin-flow/`)
+O código **deste** repositório (`core/`, `session/`, `painel/`)
 não tem licença declarada, e isso é uma escolha em aberto, não um esquecimento:
 sem um arquivo `LICENSE`, o padrão legal é "todos os direitos reservados".
 Definir uma é tarefa do dono do repositório.
@@ -252,10 +308,11 @@ Definir uma é tarefa do dono do repositório.
 
 - **Trocar de peça exige recarregar a página** — não existe ferramenta de
   fechar documento, e `new_document` recusa se houver uma aberta. Use
-  `POST /kiosk/recarregar` (o companheiro CDP executa `Page.reload`). Esse
-  endpoint é da **PONTE**, não do núcleo: `http://<host>:17400/kiosk/recarregar`,
-  que só está publicado em `127.0.0.1` — de fora do host Docker não há como
-  chamá-lo, e o núcleo não tem rota equivalente.
+  `POST /kiosk/recarregar`, que é do **núcleo** (`http://<host>:8080/kiosk/recarregar`):
+  ele encaminha o pedido para a ponte pelo lado do servidor, e o companheiro
+  CDP executa `Page.reload`. A rota no núcleo existe porque a ponte **não
+  publica porta no host** — antes o endpoint era `http://<host>:17400/kiosk/recarregar`,
+  da ponte, alcançável só pelo loopback da máquina do Docker.
 - **`chown -R` em diretório de imagem dentro do entrypoint é dívida de startup
   garantida.** Foi real: o núcleo fazia `chown -R /parts /venv /app` antes de
   reexecutar como uid 1000, e no overlayfs cada arquivo precisa ser copiado
@@ -280,7 +337,7 @@ Definir uma é tarefa do dono do repositório.
 - **`export_nodes` devolve só metadados** — os bytes do STEP são um download do
   navegador. O companheiro CDP os grava em `/data/capturas`, a ponte publica em
   `GET /capturas/<nome>` e o núcleo busca por nome único (com *nonce*) e apaga.
-- **`HOME` do núcleo** aponta para um diretório gravável (`/tmp/fluxo-home`):
+- **`HOME` do núcleo** aponta para um diretório gravável (`/tmp/colab-home`):
   o ezdxf, puxado pelo build123d, precisa escrever `~/.config`.
 - **Logs Docker têm prefixo binário de 8 bytes** — filtre
   `[\x00-\x08\x0e-\x1f]` antes de ler.
@@ -293,7 +350,7 @@ Definir uma é tarefa do dono do repositório.
   proxy na frente volta a ser necessário.
 - **A ordem dos `mount` em `main.py` é frágil, e o último é casado antes de
   qualquer rota registrada depois dele.** Os mounts são casados na ordem de
-  registro, então `app.mount("/", StaticFiles(dist))` fica no fim e `/flow` vem
+  registro, então `app.mount("/", StaticFiles(dist))` fica no fim e `/painel` vem
   antes. Se alguém mover uma rota da API para depois do bloco estático, ela fica
   inacessível — o mount é casado primeiro. O sintoma medido não é o que se
   supõe: GET em caminho inexistente continua dando 404 do FastAPI (não
@@ -327,9 +384,10 @@ refresh estava funcionando e o defeito era do probe).
 Este repositório é um **protótipo**. Fragilidades reais, não teóricas:
 
 - **Sem autenticação em lugar nenhum.** O REST, o MCP e o relay da ponte são
-  abertos. As portas 17373/17400 ficam no loopback do host Docker, mas o 8080 e
-  o 9001 são públicos: qualquer um que alcance o host pode publicar versões,
-  escrever na fila de conversa e dirigir o navegador do kiosk.
+  abertos. As portas 8080 e 9001 são públicas: qualquer um que alcance o host
+  pode publicar versões, escrever na fila de conversa e dirigir o navegador do
+  kiosk. A ponte ficou fora do host (sem `ports:` no `session`), o que fecha o
+  caminho mais direto — mas o núcleo, que fala com ela, continua aberto.
 - **O kiosk é um único ponto de falha.** Um `alert()` em caminho de erro do app
   congela a thread principal da página; o companheiro CDP fecha o diálogo, mas
   a página continua no estado em que estava. Não há health-check do renderer.
@@ -350,5 +408,5 @@ Este repositório é um **protótipo**. Fragilidades reais, não teóricas:
   `validacao.json` com novo `gerado_em`: os dois aparecem como modificados até
   a próxima publicação commitar.
 - **A versão zumbi aconteceu.** O defeito de arquivar sem documento foi real e
-  corrigido, mas a lição de fundo persiste: o fluxo confia no estado da RAM do
+  corrigido, mas a lição de fundo persiste: o núcleo confia no estado da RAM do
   kiosk, e a única defesa é conferir antes de escrever.

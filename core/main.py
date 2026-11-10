@@ -1,5 +1,5 @@
 """
-Núcleo do fluxo de peças paramétricas.
+Núcleo do 3D Agent Colab.
 
 Um único processo FastAPI que serve quatro coisas:
 
@@ -7,7 +7,7 @@ Um único processo FastAPI que serve quatro coisas:
      usado pelo painel (plugin Chili3D) e por qualquer cliente HTTP;
   2. MCP streamable-http em /mcp  — as ferramentas que o agente chama;
   3. arquivo de registro em /parts/<slug>/vN/ com git;
-  4. estático: o app Chili3D (/app/static/dist) e o painel (/flow/).
+  4. estático: o app Chili3D (/app/static/dist) e o painel (/painel/).
 
 O núcleo nunca é a fonte da verdade da geometria: a geometria vive no
 documento Chili3D (controlado pela ponte) ou num script build123d. O núcleo
@@ -285,8 +285,8 @@ def part_index() -> list[dict[str, Any]]:
 def git_commit(slug: str, version: int, message: str) -> None:
     if not (PARTS_ROOT / ".git").exists():
         git(["init", "--quiet"])
-        git(["config", "user.email", "fluxo@local"])
-        git(["config", "user.name", "Fluxo de Peças"])
+        git(["config", "user.email", "3d-agent-colab@local"])
+        git(["config", "user.name", "3D Agent Colab"])
     git(["add", "-A"])
     git(["commit", "--quiet", "-m", f"{slug} v{version:04d}: {message}"])
 
@@ -486,7 +486,7 @@ def extract_params(code: str) -> dict[str, Any]:
 
 # ------------------------------------------------------------------ app
 
-app = FastAPI(title="Núcleo do Fluxo de Peças", version="1.0.0")
+app = FastAPI(title="3D Agent Colab", version="1.0.0")
 
 # O painel é servido pelo nginx (outra origem) e bate aqui no navegador do usuário.
 app.add_middleware(
@@ -529,6 +529,33 @@ async def ponte_estado() -> dict[str, Any]:
 async def ponte_chamar(request: Request) -> dict[str, Any]:
     body = await request.json()
     return bridge_call(str(body.get("name", "")), body.get("args") or {})
+
+
+@app.post("/kiosk/recarregar")
+async def kiosk_recarregar() -> dict[str, Any] | Response:
+    """Recarrega a página do kiosk (troca de peça exige página limpa).
+
+    O pedido em si é da ponte: ela grava um arquivo em <data>/pedidos e o
+    companheiro CDP executa `Page.reload`. O que esta rota acrescenta é o
+    caminho pelo host — a ponte não publica porta no host, então quem está
+    fora da rede dos containers só consegue falar com ela **através** do
+    núcleo. Antes o endereço era `http://<host>:17400/kiosk/recarregar`,
+    preso ao loopback da máquina do Docker.
+    """
+    try:
+        req = urllib.request.Request(
+            f"{BRIDGE_URL}/kiosk/recarregar",
+            data=b"{}",
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as res:
+            corpo = json.loads(res.read().decode("utf-8") or "{}")
+    except Exception as err:
+        # 502 e não 200 com ok:false — fingir sucesso aqui faz o agente
+        # achar que a página recarregou quando ela continua na peça antiga.
+        return JSONResponse({"ok": False, "erro": f"ponte inacessível ({err})"}, status_code=502)
+    return {"ok": bool(corpo.get("ok", True)), "ponte": BRIDGE_URL}
 
 
 @app.post("/estado-plugin")
@@ -1055,7 +1082,7 @@ async def mcp_endpoint(request: Request) -> Response:
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "fluxo-pecas", "version": "1.0.0"},
+                    "serverInfo": {"name": "3d-agent-colab", "version": "1.0.0"},
                 }
             }
         )
@@ -1109,13 +1136,13 @@ async def mcp_get() -> dict[str, Any]:
 
 # ------------------------------------------------------------------ estático
 #
-# O núcleo também serve o app compilado (Chili3D) e o painel em /flow/. Antes
+# O núcleo também serve o app compilado (Chili3D) e o painel em /painel/. Antes
 # isso era um nginx em outro container; com os dois no mesmo processo, a regra
 # do PluginManager — `?plugin=` precisa ter o MESMO host da página — fica
 # satisfeita de graça, sem `location ^~` nem alias.
 #
 # A ORDEM IMPORTA, e é frágil: os mounts são casados na ordem de registro, e o
-# mount em "/" é casado antes de qualquer rota registrada DEPOIS dele. `/flow`
+# mount em "/" é casado antes de qualquer rota registrada DEPOIS dele. `/painel`
 # vem primeiro por isso, e este bloco é o ÚLTIMO do arquivo de propósito.
 #
 # Medido no container, para não escrever lenda: mover uma rota da API para baixo
@@ -1131,7 +1158,7 @@ async def mcp_get() -> dict[str, Any]:
 
 STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", "/app/static"))
 DIST_DIR = STATIC_ROOT / "dist"
-FLOW_DIR = STATIC_ROOT / "flow"
+PAINEL_DIR = STATIC_ROOT / "painel"
 
 IMUTAVEIS = re.compile(r"\.(?:wasm|js|css)$")
 
@@ -1148,7 +1175,7 @@ async def cache_estatico(request: Request, call_next):
 
     try:
         caminho = request.url.path
-        if caminho.startswith("/flow"):
+        if caminho.startswith("/painel"):
             response.headers["Cache-Control"] = "no-store"
         elif IMUTAVEIS.search(caminho):
             response.headers["Cache-Control"] = "public, max-age=604800"
@@ -1163,10 +1190,10 @@ if not DIST_DIR.is_dir():
     # o pior modo de falha para diagnosticar. Melhor avisar alto e cedo.
     print("[core] AVISO: %s não existe — o app não será servido" % DIST_DIR, flush=True)
 else:
-    if FLOW_DIR.is_dir():
-        app.mount("/flow", StaticFiles(directory=FLOW_DIR), name="flow")
+    if PAINEL_DIR.is_dir():
+        app.mount("/painel", StaticFiles(directory=PAINEL_DIR), name="painel")
     else:
-        print("[core] AVISO: %s não existe — o painel não será servido" % FLOW_DIR, flush=True)
+        print("[core] AVISO: %s não existe — o painel não será servido" % PAINEL_DIR, flush=True)
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="app")
 
 

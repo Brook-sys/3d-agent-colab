@@ -1,4 +1,4 @@
-"""Suporte em L — peça de teste do fluxo paramétrico.
+"""Suporte em L — peça de teste do 3D Agent Colab.
 
 Caminho headless (Opção A): o núcleo executa este arquivo com build123d dentro do
 container `core` e arquiva a versão com STEP + STL. `result` é o contrato: sem ele

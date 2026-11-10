@@ -1,4 +1,4 @@
-"""Espaçador — peça de teste do fluxo paramétrico (geometria de revolução).
+"""Espaçador — peça de teste do 3D Agent Colab (geometria de revolução).
 
 Uso pelo agente:  construir_python(slug="espacador", codigo=<conteúdo deste arquivo>)
 """

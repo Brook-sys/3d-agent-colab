@@ -1,96 +1,58 @@
-# Fluxo de Peças 3D — stack (sessão + núcleo)
+# 3D Agent Colab — núcleo (core) + sessão (session).
 #
-# As duas imagens vêm do GHCR e são buildadas pelo workflow .github/workflows/imagens.yml
-# a cada push na main (ou por disparo manual). Nada é compilado no host Docker:
+# Imagens ghcr.io/brook-sys/3d-agent-colab-{core,session}:main, publicadas pelo
+# workflow a cada push na main. O host Docker não compila nada: só faz o pull.
 #
-#   ghcr.io/brook-sys/3d-agent-colab-core     FastAPI + MCP + registro + build123d
-#                                              + o app Chili3D e o painel (estático)
-#   ghcr.io/brook-sys/3d-agent-colab-session  ponte WebSocket + Chromium headless (kiosk)
-#
-# Para fixar uma versão já publicada, troque a tag: `:sha-<curto>` fica no GHCR
-# ao lado de `:main`. Para publicar imagem nova, dê push na main.
-#
-# ERA TRÊS containers: havia um `web` de nginx só para servir os arquivos
-# estáticos. Ele saiu — o núcleo passou a servir o app e o painel no mesmo
-# processo (bloco "estático" no fim de core/main.py). O que se ganha: uma
-# origem só, que satisfaz de graça a regra do PluginManager (`?plugin=` precisa
-# ter o mesmo host da página) sem `location ^~` nem alias de nginx. O que se
-# perde: uvicorn não é nginx — sem gzip, sem cache de arquivo otimizado, e o
-# núcleo passa a dividir cgroup com o registro. Para um usuário na LAN serve;
-# se o uso crescer, um proxy na frente volta a ser necessário.
-#
-# Portas publicadas no host:
-#   8080  app + painel, para o navegador do usuário
-#   9001  REST + MCP do núcleo (o agente aponta o MCP para http://<host>:9001/mcp)
-#   17373 ponte WebSocket — só em 127.0.0.1: é controle remoto sem autenticação
-#   17400 relay HTTP da ponte — só em 127.0.0.1
-#
-# O core publica 9001 ALÉM de 8080, e isso não é redundância: o painel cai no
-# fallback `http://${location.hostname}:9001` quando a URL não traz `api=`
-# (plugin-flow/src/extension.js:16). No kiosk o hostname é `core`; no navegador
-# do usuário é a máquina do Docker. Publicar só 8080 quebraria metade dos
-# acessos.
-#
-# FONTE_URL (opcional, canal legado) é o endereço HTTP da máquina de
-# desenvolvimento: com ela no ar, os entrypoints atualizam o código por cima do
-# que está na imagem antes de subir. Serve para iterar sem rebuildar; o caminho
-# oficial de mudança é commit + workflow. Sem ela, tudo roda com a imagem.
-#
-# /venv NÃO é volume: ele já vem pronto dentro da imagem core, e volume externo
-# só faria o container reinstalar dependências no primeiro boot.
+# Os diretórios de dados precisam existir no host antes do primeiro deploy:
+#   mkdir -p /opt/3d-agent-colab/parts /opt/3d-agent-colab/session
+#   chown 1000:1000 /opt/3d-agent-colab/parts      # o núcleo roda como uid 1000
 
 services:
   core:
     image: ghcr.io/brook-sys/3d-agent-colab-core:main
+    container_name: 3d-agent-colab-core
     restart: unless-stopped
     pull_policy: always
     working_dir: /app
     environment:
-      PARTS_ROOT: /parts
-      BRIDGE_URL: http://session:17400
-      VENV_PYTHON: /venv/bin/python
-      PORT: "9001"
-      PRINTER_MODEL: "Elegoo Neptune 4"
-      PUID: "1000"
-      PGID: "1000"
+      PARTS_ROOT: ${PARTS_ROOT:-/parts}
+      BRIDGE_URL: ${BRIDGE_URL:-http://session:17400}
+      PORT: ${PORT:-9001}
+      PRINTER_MODEL: ${PRINTER_MODEL:-Elegoo Neptune 4}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
       FONTE_URL: ${FONTE_URL:-}
     volumes:
-      - partes:/parts
+      - /opt/3d-agent-colab/parts:/parts
+    # 9001 publicada duas vezes: 8080 é o endereço do app no navegador, e o
+    # painel dentro do app chama o núcleo em http://<host>:9001 (fallback de
+    # extension.js) quando a URL não traz api=. Não é redundância, é o que
+    # faz o painel funcionar nos dois acessos.
     ports:
       - "8080:9001"
       - "9001:9001"
-    networks: [fluxo]
+    networks: [3d-agent-colab]
 
   session:
     image: ghcr.io/brook-sys/3d-agent-colab-session:main
+    container_name: 3d-agent-colab-session
     restart: unless-stopped
     pull_policy: always
     init: true
     shm_size: "1gb"
     environment:
-      BRIDGE_PORT: "17373"
-      BRIDGE_HTTP_PORT: "17400"
-      BRIDGE_DATA_DIR: /data
-      # `bridge=` (porta vazia = 17373) faz a página conectar em ws://127.0.0.1:17373/ws.
-      # `plugin=` PRECISA ser URL absoluta e do mesmo host: o PluginManager faz
-      # `new URL(valor)` e compara `url.host` com o da página — com um caminho
-      # relativo ("/flow/") ele lança, e o `catch` do build chama alert(), que
-      # congela o renderer headless (nada de `open` do WebSocket, nenhum timer).
-      # `part=` é a peça que o painel acompanha (publicar/comentar/medir);
-      # `painel=` liga o painel. Não tem `api=`: ver o comentário das portas.
-      KIOSK_URL: "http://core:9001/?bridge=&plugin=http://core:9001/flow/&part=espacador&painel=1"
+      BRIDGE_PORT: ${BRIDGE_PORT:-17373}
+      BRIDGE_HTTP_PORT: ${BRIDGE_HTTP_PORT:-17400}
+      BRIDGE_DATA_DIR: ${BRIDGE_DATA_DIR:-/data}
+      KIOSK_URL: ${KIOSK_URL:-http://core:9001/?bridge=&plugin=http://core:9001/painel/&part=espacador&painel=1}
       FONTE_URL: ${FONTE_URL:-}
     volumes:
-      - sessao:/data
-    ports:
-      - "127.0.0.1:17373:17373"
-      - "127.0.0.1:17400:17400"
-    networks: [fluxo]
-
-volumes:
-  partes:
-  sessao:
+      - /opt/3d-agent-colab/session:/data
+    # Sem ports de propósito: a ponte é controle remoto sem autenticação sobre
+    # o navegador do kiosk, e só o núcleo precisa dela — pela rede interna.
+    # Para recarregar o kiosk use POST /kiosk/recarregar no núcleo (8080).
+    networks: [3d-agent-colab]
 
 networks:
-  fluxo:
-    driver: bridge
+  3d-agent-colab:
+    name: 3d-agent-colab

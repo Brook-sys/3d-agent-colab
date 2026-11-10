@@ -7,7 +7,7 @@ session/node_modules/
 
 # O fork do Chili3D é um repositório git próprio (532 MB com o histórico).
 # Ele fica fora deste versionamento: use um submódulo ou clone separado, e
-# compile o dist/ quando precisar reconstruir a imagem web.
+# compile o dist/ quando precisar reconstruir a imagem core.
 chili3d-upstream/
 
 # Estado de runtime da máquina de desenvolvimento (não do container).
