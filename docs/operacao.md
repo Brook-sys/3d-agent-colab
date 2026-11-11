@@ -63,7 +63,8 @@ grep -a "painel ativo" /opt/3d-agent-colab/session/chrome.log | tail -3
 
 # 5. o kiosk tem documento e a IA está na tela?
 grep -a "documento do kiosk\|assistente de IA" /opt/3d-agent-colab/session/kiosk-cdp.log | tail -4
-#    documento do kiosk: criado "espacador" …  ·  assistente de IA: pubsub · painel aberto
+#    documento do kiosk: criado "espacador" …  ·  assistente de IA: ja-aberto · painel aberto
+#    ("ja-aberto" é o normal: o painel de IA começa aberto no boot do app)
 ```
 
 A checagem 4 é a que importa: para o plugin, build verde **não** significa painel funcionando. Um erro de referência dentro do `buildPanel()` não derruba a página — só o console.
@@ -138,6 +139,7 @@ Onde procurar o quê:
 | documento do kiosk | `kiosk-cdp.log` | `documento do kiosk` |
 | `alert()` congelando | `kiosk-cdp.log` | `diálogo fechado` |
 | download do STEP | `kiosk-cdp.log` | `download concluído` |
+| companheiro reconfigurando | `kiosk-cdp.log` | `página navegou` (só após navegação; ausente no boot quieto) |
 | publicação sem STEP | `v000N/params.json` → `diagnostico.step` | — |
 | REST/MCP | logs do core | `POST /mcp`, `publicar` |
 

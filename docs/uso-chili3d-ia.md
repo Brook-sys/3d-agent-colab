@@ -37,7 +37,7 @@ Se a página for servida em HTTPS, o `WebSocket` inseguro levanta `SecurityError
 ## 2. Abrir o assistente
 
 1. **Ribbon ▸ Manager ▸ Other ▸ AI Assistant** — o comando `ai.toggleChat`. O rótulo depende do idioma: `AI Assistant` (en), `Assistente IA` (pt-br), `AI 助手` (zh-cn).
-2. **Kiosk** — o companheiro CDP abre sozinho na carga da página, publicando `toggleChatPanel` no PubSub (e somente se o painel ainda não estiver aberto — o tópico alterna, publicar de novo fecharia).
+2. **Kiosk** — o companheiro CDP confere na carga da página e publica `toggleChatPanel` no PubSub **somente se o painel ainda não estiver aberto** (o tópico alterna: publicar de novo fecharia).
 
 O painel é o custom element `chili-ai-chat`, montado pelo `Editor` do `@chili3d/ui`. Ele **começa acoplado e aberto**; arraste o cabeçalho para destacá-lo como janela flutuante e arraste de volta para re-acoplar. Envie com **Ctrl+Enter** ou o botão de envio; dá para anexar imagens.
 
@@ -47,7 +47,7 @@ O painel é o custom element `chili-ai-chat`, montado pelo `Editor` do `@chili3d
 
 Não é defeito do kiosk, é regra do app: `CommandService.checking()` recusa — **em silêncio**, com um `Logger.error("No active document")` que ninguém vê — todo comando que não seja `isApplicationCommand` quando `activeView` é `undefined`. `ai.toggleChat` não é comando de aplicação.
 
-Medido neste deployment, sem documento:
+Medido neste deployment, **sem** documento:
 
 ```
 clique no botão da ribbon   → nenhum efeito
@@ -56,12 +56,19 @@ pub("executeCommand")       → nenhum efeito
 pub("toggleChatPanel")      → FUNCIONA
 ```
 
-O último caminho funciona porque `editor.ts` assina o tópico `toggleChatPanel` **direto**, sem passar pelo serviço de comandos.
+Medido **com** documento aberto (boot novo do kiosk, documento criado pelo companheiro):
+
+```
+clique no botão da ribbon   → LOG: executing command ai.toggleChat, e o painel FECHA (toggle real)
+pub("toggleChatPanel")      → reabre o painel
+```
+
+O caminho pelo PubSub funciona nos dois casos porque `editor.ts` assina o tópico `toggleChatPanel` **direto**, sem passar pelo serviço de comandos. O da ribbon passa pelo `CommandService` — por isso depende de `activeView`.
 
 Daí duas decisões deste projeto:
 
 - o companheiro do kiosk **cria um documento no boot** chamando a ferramenta `new_document` (que invoca `app.newDocument()` sem passar pelo `CommandService` e recusa se já houver documento — é idempotente). Com `activeView` definido, o botão da ribbon volta a funcionar e o assistente tem no que agir;
-- o caminho do companheiro para abrir a IA é **só** o PubSub. A tentativa de clique na ribbon saiu do código justamente porque parecia funcionar e não funcionava.
+- o caminho do companheiro para abrir a IA é **só** o PubSub, e ele é idempotente de propósito: `editor.ts` chama `showChat()` no boot, então o painel **começa aberto** e publicar `toggleChatPanel` de novo o **fecharia**. O companheiro confere antes e o log diz `assistente de IA: ja-aberto · painel aberto`. O clique na ribbon saiu do nosso código por escolha (menos gancho no nativo), não porque esteja morto — morto ele estava só sem documento.
 
 Na sua máquina, a consequência prática é a mesma: abrir o app pelo `/` sem documento deixa o botão "AI Assistant" sem efeito até você criar um documento (menu ▸ novo, ou `doc.new` na ribbon, que **é** comando de aplicação).
 
