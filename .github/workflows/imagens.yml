@@ -23,6 +23,7 @@ on:
       - "session/**"
       - "painel/**"
       - "partes/**"
+      - "teste/**"
       - "chili3d.ref"
       - ".github/workflows/imagens.yml"
   workflow_dispatch:
@@ -81,6 +82,21 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('painel/manifest.json','utf8')); console.log('manifest ok')"
           node --check session/bridge-server.mjs
           node --check session/kiosk-cdp.mjs
+
+      # A suíte do companheiro CDP. Não é enfeite: ela AVALIA o código real
+      # extraído de session/kiosk-cdp.mjs e inclui teste de MUTAÇÃO — cada
+      # mutação quebra de propósito uma parte do arquivo e exige que a suíte
+      # acuse. Sem essa etapa, um verde significaria apenas "rodou".
+      #
+      # Foi esta suíte que pegou, antes de ir para produção, o defeito da
+      # navegação no mesmo alvo: contra o código anterior ela falha em dois
+      # cenários e o processo MORRE num terceiro (evento malformado sem
+      # tratamento). Nada disso derrubaria o build do Docker.
+      #
+      # Roda nos dois jobs da matriz porque é barato (~30 s) e porque falhar
+      # antes do buildx economiza os dois builds.
+      - name: testes do companheiro CDP
+        run: node teste/rodar.mjs
 
       - name: buildx
         uses: docker/setup-buildx-action@v3

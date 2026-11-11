@@ -27,3 +27,7 @@ DEPLOY.md
 LOCAL.md
 AGENTS.md
 docs/
+
+# A suíte de teste do companheiro roda no CI, não dentro da imagem: ela
+# depende de extrair seções do fonte e de spawnar processos node.
+teste/
