@@ -63,6 +63,25 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
+      # O painel é JavaScript puro sem build: ele entra na imagem por COPY e
+      # roda no navegador do kiosk. Um erro de sintaxe ou de referência não
+      # quebra o build do Docker — quebra o plugin em silêncio (a página abre,
+      # o painel não aparece, e o console é a única testemunha). Foi assim que
+      # `constbotaoIa` passou uma revisão inteira: `node --check` aceita, porque
+      # aquilo é um identificador válido; o `appendChild(constbotaoIa)` é que
+      # morreria, dentro do `buildPanel()`, depois do `COPY`.
+      #
+      # `node --check` pega sintaxe, e é barato. Referência solta ele NÃO pega
+      # — para isso existe a verificação pós-deploy (o log `[painel] painel
+      # ativo` no chrome.log do kiosk). O que este passo garante é que o CI
+      # fica vermelho no erro grosseiro, antes de a imagem ser publicada.
+      - name: sintaxe do painel e do manifest
+        run: |
+          node --check painel/src/extension.js
+          node -e "JSON.parse(require('fs').readFileSync('painel/manifest.json','utf8')); console.log('manifest ok')"
+          node --check session/bridge-server.mjs
+          node --check session/kiosk-cdp.mjs
+
       - name: buildx
         uses: docker/setup-buildx-action@v3
 
