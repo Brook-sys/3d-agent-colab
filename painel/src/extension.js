@@ -6,7 +6,6 @@
  *   - comentários ancorados na seleção/variável atuais (nunca em face id, que quebra a cada rebuild)
  *   - chat que compartilha a mesma fila do terminal do agente
  *   - publica versão (documento + variáveis + STEP exportado pelo núcleo)
- *   - configura e abre o assistente de IA embutido do Chili3D (provedor, endpoint, modelo)
  *
  * Tudo em JS puro com o global Chili3dCore (ver plugins/helloworld-js do upstream).
  */
@@ -17,132 +16,6 @@ const PARAMS = new URLSearchParams(location.search);
 const API = (PARAMS.get("api") || `http://${location.hostname}:9001`).replace(/\/$/, "");
 const SLUG = PARAMS.get("part") || "teste";
 const PAINEL_LIGADO = PARAMS.get("painel") !== "0";
-
-/* ------------------------------------------------- IA embutida do Chili3D */
-
-// O assistente de IA do app (pacote @chili3d/ai) só é importado quando a URL
-// traz `?bridge=` — `appBuilder.connectBridge()` devolve antes do import sem
-// esse parâmetro, "an ordinary visit never pays for an agent feature".
-// Verificado no fonte fixado (chili3d.ref, packages/builder/src/appBuilder.ts).
-const IA_DISPONIVEL = PARAMS.has("bridge");
-
-// Chave da config do assistente, e não nossa: `ObjectStorage.default` do core
-// prefixa `chili3d.app.` e o módulo de IA grava em `ai.config`
-// (packages/ai/src/settings.ts, STORAGE_KEY) — daí `chili3d.app.ai.config`.
-// Escrevemos os campos que não são segredo (provedor, endpoint, modelo,
-// janela de contexto). A CHAVE NÃO: `persist()` a retira antes de gravar, e o
-// `sessionApiKey` vive só na memória do módulo. Uma config antiga que ainda
-// tivesse chave em texto puro é migrada para fora pelo próprio módulo. Nós
-// nunca a escrevemos — quem usa cola a chave na engrenagem do painel da IA.
-const IA_CHAVE = "chili3d.app.ai.config";
-// Espelho só nosso, para o formulário lembrar o que foi digitado. Também sem
-// segredo: se um dia alguém guardar a chave aqui, ela vai para o repositório
-// de qualquer um que abrir o DevTools — é exatamente o que não queremos.
-const PAINEL_CONFIG_CHAVE = "painel.config";
-
-const IA_PRESETS = [
-    {
-        id: "openai",
-        rotulo: "OpenAI (compatível)",
-        provider: "completions",
-        baseURL: "https://api.openai.com/v1",
-        modelo: "gpt-5.5",
-    },
-    {
-        id: "responses",
-        rotulo: "OpenAI Responses (compatível)",
-        provider: "responses",
-        baseURL: "https://api.openai.com/v1",
-        modelo: "gpt-5.5",
-    },
-    {
-        id: "anthropic",
-        rotulo: "Anthropic (compatível)",
-        provider: "anthropic",
-        baseURL: "https://api.anthropic.com",
-        modelo: "claude-opus-5",
-    },
-    { id: "livre", rotulo: "Outro endpoint (compatível)", provider: "completions", baseURL: "", modelo: "" },
-];
-
-const IA_PROVIDERS = [
-    { id: "anthropic", rotulo: "anthropic" },
-    { id: "completions", rotulo: "openai completions" },
-    { id: "responses", rotulo: "openai responses" },
-];
-
-// Janela de contexto e profundidade de raciocínio NÃO são gravadas daqui: o
-// módulo de IA aplica o próprio default quando o campo falta (é a filosofia
-// dele — "omitido" não é "médio", é "o que este endpoint fizer sozinho"), e um
-// número errado escrito pelo painel pioraria o medidor de contexto sem
-// melhorar o modelo. Quem precisar mexer nisso usa a engrenagem do painel da
-// IA. O default do módulo é 1.000.000, que é o que a maioria dos modelos
-// atuais aguenta.
-
-function lerStorage(chave) {
-    try {
-        const cru = localStorage.getItem(chave);
-        return cru ? JSON.parse(cru) : null;
-    } catch {
-        return null;
-    }
-}
-
-function gravarStorage(chave, valor) {
-    try {
-        localStorage.setItem(chave, JSON.stringify(valor));
-        return true;
-    } catch (err) {
-        console.log("[painel] localStorage recusou a gravação:", err);
-        return false;
-    }
-}
-
-function iaConfig() {
-    const salvo = lerStorage(IA_CHAVE) || {};
-    const espelho = lerStorage(PAINEL_CONFIG_CHAVE) || {};
-    return { ...espelho, ...salvo };
-}
-
-/** Escreve a config do assistente SEM a chave — ver o comentário de IA_CHAVE. */
-function salvarIaConfig(campos) {
-    const { apiKey: _chave, ...resto } = campos;
-    const atual = lerStorage(IA_CHAVE) || {};
-    const nova = { ...atual, ...resto };
-    // `undefined` explicitamente gravaria a chave no JSON algumas vezes;
-    // `JSON.stringify` a omite, mas o merge abaixo a traria de volta.
-    for (const chave of Object.keys(nova)) if (nova[chave] === undefined) delete nova[chave];
-    const ok = gravarStorage(IA_CHAVE, nova);
-    if (ok) gravarStorage(PAINEL_CONFIG_CHAVE, { ...resto, preset: campos.preset });
-    return ok;
-}
-
-/**
- * Abre o assistente de IA do app. Duas vias, na ordem: o botão da ribbon
- * (passa pelo comando `ai.toggleChat`, que é o caminho que a UI usa) e, se o
- * botão não existir nesta build, o PubSub direto — `Chili3dCore` é o namespace
- * do core exposto em `globalThis` por `AppBuilder.ensureAPI()`.
- */
-function abrirIa() {
-    const titulos = ["AI Assistant", "Assistente IA", "AI 助手"];
-    let botao = null;
-    for (const titulo of titulos) {
-        botao = [...document.querySelectorAll("ribbon-button")].find((b) => b.getAttribute("title") === titulo);
-        if (botao) break;
-    }
-    if (botao) {
-        botao.click();
-        return "ribbon";
-    }
-    try {
-        PubSub.default.pub("toggleChatPanel");
-        return "pubsub";
-    } catch (err) {
-        console.log("[painel] não foi possível abrir o assistente de IA:", err);
-        return null;
-    }
-}
-
 
 /* ------------------------------------------------------------------ util */
 
@@ -269,7 +142,6 @@ let chatBox = null;
 let versionLabel = null;
 let bridgeLabel = null;
 let notesBox = null;
-let iaBox = null;
 
 function buildPanel() {
     panel = el("div", {
@@ -415,102 +287,6 @@ function buildPanel() {
         [],
     );
 
-    const iaTitle = el("div", { text: "Assistente de IA (embutido)", style: { fontWeight: "600", margin: "12px 0 6px" } });
-    iaBox = el("div", { style: { fontSize: "12px", color: "#8fa3bd" } });
-
-    const iaPreset = el("select", { style: { width: "100%", boxSizing: "border-box", marginTop: "4px", background: "#12161f", border: "1px solid #2c3444", color: "#e8ecf3", borderRadius: "6px", padding: "5px" } });
-    for (const preset of IA_PRESETS) iaPreset.appendChild(el("option", { value: preset.id, text: preset.rotulo }));
-    const iaProviderRow = el("div", { style: { display: "none", marginTop: "4px" } });
-    const iaProvider = el("select", { style: { width: "100%", boxSizing: "border-box", background: "#12161f", border: "1px solid #2c3444", color: "#e8ecf3", borderRadius: "6px", padding: "5px" } });
-    for (const provider of IA_PROVIDERS) iaProvider.appendChild(el("option", { value: provider.id, text: provider.rotulo }));
-    iaProviderRow.appendChild(iaProvider);
-
-    const campo = (placeholder, valor) =>
-        el("input", {
-            placeholder,
-            value: valor ?? "",
-            style: {
-                width: "100%",
-                boxSizing: "border-box",
-                background: "#12161f",
-                border: "1px solid #2c3444",
-                color: "#e8ecf3",
-                borderRadius: "6px",
-                padding: "5px",
-                marginTop: "4px",
-            },
-        });
-
-    const configAtual = iaConfig();
-    const presetAtual = IA_PRESETS.find((p) => p.id === configAtual.preset) || IA_PRESETS[0];
-    iaPreset.value = presetAtual.id;
-    iaProvider.value = configAtual.provider || presetAtual.provider;
-    const iaBase = campo("endpoint (baseURL)", configAtual.baseURL ?? presetAtual.baseURL);
-    const iaModelo = campo("modelo", configAtual.model ?? presetAtual.modelo);
-
-    // O botão de abrir/fechar vive dentro de `iaBox` (ver `renderIa`): ele
-    // mostra o estado atual do painel da IA, o que um botão solto não faria.
-    const salvarIa = el("button", {
-        text: "Salvar configuração da IA",
-        style: {
-            marginTop: "6px",
-            width: "100%",
-            background: "#1d4e6f",
-            border: "none",
-            color: "#fff",
-            padding: "7px",
-            borderRadius: "6px",
-            cursor: "pointer",
-        },
-        onclick: async () => {
-            const preset = IA_PRESETS.find((p) => p.id === iaPreset.value) || IA_PRESETS[3];
-            const campos = {
-                preset: preset.id,
-                provider: preset.id === "livre" ? iaProvider.value : preset.provider,
-                baseURL: iaBase.value.trim() || preset.baseURL,
-                model: iaModelo.value.trim() || preset.modelo,
-            };
-            if (salvarIaConfig(campos)) toast("configuração da IA salva neste navegador");
-            else toast("não foi possível salvar (localStorage bloqueado)");
-            renderIa();
-        },
-    });
-
-    iaPreset.addEventListener("change", () => {
-        const preset = IA_PRESETS.find((p) => p.id === iaPreset.value) || IA_PRESETS[3];
-        iaProviderRow.style.display = preset.id === "livre" ? "block" : "none";
-        if (!iaBase.value.trim()) iaBase.placeholder = preset.baseURL || "http://SEU-HOST:4000/v1";
-        if (!iaModelo.value.trim()) iaModelo.placeholder = preset.modelo || "nome-do-modelo";
-        if (preset.baseURL && !iaBase.value.trim()) iaBase.value = preset.baseURL;
-        if (preset.modelo && !iaModelo.value.trim()) iaModelo.value = preset.modelo;
-        iaProvider.value = preset.provider;
-    });
-
-    const iaNota = el("div", {
-        text: "A chave da API não passa por aqui: ela é colada na engrenagem do painel da IA e fica só na memória da aba. Endpoint e modelo são gravados no navegador.",
-        style: { color: "#7d8da0", marginTop: "6px", fontSize: "11px" },
-    });
-
-    const iaAtivar = el("button", {
-        text: IA_DISPONIVEL ? "" : "Ativar IA nesta página (adiciona ?bridge= e recarrega)",
-        style: { display: IA_DISPONIVEL ? "none" : "block", marginTop: "6px", width: "100%", background: "transparent", border: "1px solid #2c3444", color: "#9fb0c8", borderRadius: "6px", padding: "6px", cursor: "pointer", fontSize: "11px" },
-        onclick: () => {
-            const url = new URL(location.href);
-            url.searchParams.set("bridge", "");
-            location.href = url.toString();
-        },
-    });
-
-    body.appendChild(iaTitle);
-    body.appendChild(iaBox);
-    body.appendChild(iaPreset);
-    body.appendChild(iaProviderRow);
-    body.appendChild(iaBase);
-    body.appendChild(iaModelo);
-    body.appendChild(salvarIa);
-    body.appendChild(iaNota);
-    body.appendChild(iaAtivar);
-
     const publishButton = el(
         "button",
         {
@@ -647,56 +423,6 @@ function renderAnnotations() {
     }
 }
 
-/** Uma linha de espelho do que o assistente de IA vai usar, e do que falta. */
-async function renderIa() {
-    if (!iaBox) return;
-    iaBox.replaceChildren();
-    if (!IA_DISPONIVEL) {
-        iaBox.appendChild(
-            el("div", {
-                text: "assistente indisponível: o módulo de IA só é carregado quando a URL traz ?bridge= (veja o botão abaixo)",
-                style: { color: "#d79a7a" },
-            }),
-        );
-        return;
-    }
-    const config = iaConfig();
-    const aberto = Boolean(document.querySelector("chili-ai-chat"));
-    const partes = [];
-    partes.push(aberto ? "painel da IA: aberto" : "painel da IA: fechado");
-    partes.push(config.model ? `modelo: ${config.model}` : "modelo: não definido");
-    partes.push(config.baseURL ? `endpoint: ${config.baseURL}` : "endpoint: padrão do provedor");
-    // A chave nunca é lida daqui. O que dá para dizer com honestidade é se ela
-    // existe em algum lugar: `ai.config` não a guarda, então a única fonte é a
-    // memória da aba — e ela some a cada F5.
-    iaBox.appendChild(el("div", { text: partes.join(" · "), style: { color: "#8fa3bd" } }));
-    iaBox.appendChild(
-        el("div", {
-            text: "chave: cole na engrenagem do painel da IA (não é guardada; some ao recarregar)",
-            style: { color: "#7d8da0", fontSize: "11px", marginTop: "2px" },
-        }),
-    );
-    const botao = el("button", {
-        text: aberto ? "fechar assistente de IA" : "abrir assistente de IA",
-        style: {
-            marginTop: "6px",
-            width: "100%",
-            background: "#3a2a5e",
-            border: "none",
-            color: "#fff",
-            padding: "7px",
-            borderRadius: "6px",
-            cursor: "pointer",
-            fontSize: "12px",
-        },
-        onclick: () => {
-            abrirIa();
-            renderIa();
-        },
-    });
-    iaBox.appendChild(botao);
-}
-
 /* ------------------------------------------------------------- refresh */
 
 async function refreshVariables() {
@@ -794,7 +520,8 @@ const PainelPlugin = {
                 "",
                 "- Registro de peças em /parts/<slug>/: `spec.json`, `modelo.py`, `anotacoes.json` e `v000N/`",
                 "  (STEP, documento, params, validação e manifest de cada versão).",
-                "- A peça aberta agora vem de `?part=<slug>` na URL; o painel lateral do 3D Agent Colab",
+                "- A peça da sessão vem de `?part=<slug>` na URL; o companheiro do kiosk cria o documento",
+                "  vazio no boot (não há geometria até alguém modelar). O painel lateral do 3D Agent Colab",
                 "  mostra variáveis, comentários ancorados, a fila de conversa e publica versões.",
                 "- Existem dois caminhos de IA: este assistente embutido (age no documento daqui) e um",
                 "  agente externo via MCP em `http://<host>:9001/mcp` (age pelo servidor, pela ponte WebSocket).",
@@ -849,7 +576,6 @@ CommandStore.registerCommand(PainelCommand, {
 
 if (PAINEL_LIGADO) {
     buildPanel();
-    renderIa();
     setInterval(() => {
         refreshVariables();
         refreshVersion();
@@ -859,14 +585,13 @@ if (PAINEL_LIGADO) {
     setInterval(() => {
         refreshMessages();
         refreshAnnotations();
-        renderIa();
     }, 3000);
     refreshMessages();
     refreshAnnotations();
     refreshVersion();
     refreshBridge();
     reportState();
-    console.log(`[painel] painel ativo · api=${API} · parte=${SLUG} · ia=${IA_DISPONIVEL ? "disponível" : "indisponível"}`);
+    console.log(`[painel] painel ativo · api=${API} · parte=${SLUG}`);
 }
 
 export default PainelPlugin;
