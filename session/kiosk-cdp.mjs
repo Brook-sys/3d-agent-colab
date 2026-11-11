@@ -59,6 +59,76 @@ async function lerPedidos() {
     return pedidos;
 }
 
+/**
+ * Abre o assistente de IA do app (comando `ai.toggleChat`) pouco depois que a
+ * página carrega. Escolha do usuário: no kiosk a IA já está na tela, esperando
+ * só a chave — sem ninguém para clicar na ribbon.
+ *
+ * Três detalhes que fazem a diferença e nenhum deles é óbvio:
+ *
+ * 1. O botão da ribbon NÃO tem atributo `command` no DOM: `RibbonPushButton`
+ *    guarda o nome do comando num campo readonly da classe. O que dá para
+ *    achar é o `title` (`command.ai.toggleChat` = "AI Assistant" / "Assistente
+ *    IA" / "AI 助手"). Se o idioma mudar e nenhum título casar, caímos no
+ *    `PubSub.default.pub("toggleChatPanel")`, que é o que o comando faz.
+ * 2. O módulo de IA só existe se a URL tiver `?bridge=` — `connectBridge()`
+ *    devolve antes do import sem esse parâmetro. Nosso KIOSK_URL tem, então o
+ *    botão existe; se um dia a URL mudar, o caminho "pubsub" não faz nada e o
+ *    log avisa.
+ * 3. `toggleChatPanel` alterna: se o painel já estiver aberto, publicar de
+ *    novo o FECHARIA. Por isso a conferência de `chili-ai-chat` vem antes.
+ */
+const IA_TITULOS = ["AI Assistant", "Assistente IA", "AI 助手"];
+
+/**
+ * Envelope à prova de falha: o companheiro NÃO pode morrer por causa da IA.
+ * Uma rejeição não tratada derruba o processo no Node >= 15 — e com ele a
+ * vigilância de diálogos (o `alert()` que congela o renderer) e a liberação do
+ * download do STEP. Falha em abrir a IA é um diagnóstico, não uma queda.
+ */
+async function abrirAssistenteIa(enviar) {
+    try {
+        return await abrirAssistenteIaSeguro(enviar);
+    } catch (err) {
+        return `falhou: ${err?.message || err}`;
+    }
+}
+
+async function abrirAssistenteIaSeguro(enviar) {
+    const avaliar = async (expression) => {
+        const resposta = await enviar("Runtime.evaluate", { expression, returnByValue: true });
+        return resposta?.result?.result?.value;
+    };
+
+    // Sem `Chili3dCore` e sem ribbon não há comando para chamar: clicar antes
+    // disso só perderia o clique no vácuo. (Cada `tentativa++` completo: um
+    // nome truncado aqui é sintaticamente válido, passa no `node --check` e
+    // estoura em runtime — a falha silenciosa que este arquivo existe para
+    // não ter.)
+    for (let tentativa = 0; tentativa < 40; tentativa++) {
+        if (await avaliar("Boolean(globalThis.Chili3dCore && document.querySelector('chili-ribbon'))")) break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+
+    const expressao = `(() => {
+        if (document.querySelector('chili-ai-chat')) return 'ja-aberto';
+        const titulos = ${JSON.stringify(IA_TITULOS)};
+        for (const titulo of titulos) {
+            const botao = [...document.querySelectorAll('ribbon-button')].find((b) => b.getAttribute('title') === titulo);
+            if (botao) { botao.click(); return 'botao'; }
+        }
+        try { globalThis.Chili3dCore.PubSub.default.pub('toggleChatPanel'); return 'pubsub'; }
+        catch (err) { return 'falhou: ' + err; }
+    })()`;
+    const caminho = await avaliar(expressao);
+
+    for (let tentativa = 0; tentativa < 8; tentativa++) {
+        if (await avaliar("Boolean(document.querySelector('chili-ai-chat'))")) return `${caminho} · painel aberto`;
+        await new Promise((r) => setTimeout(r, 400));
+    }
+    return `${caminho} · painel NAO apareceu`;
+}
+
 async function listarPaginas() {
     try {
         const res = await fetch(`${CDP_HTTP}/json/list`);
@@ -134,6 +204,8 @@ function vigiar(alvo, soRecarregar = false) {
                 linha("recarregando a página a pedido");
                 await enviar("Page.reload", { ignoreCache: false });
             }
+            const ia = await abrirAssistenteIa(enviar);
+            linha("assistente de IA:", ia);
         });
         sock.on("close", () => resolve());
         sock.on("error", () => resolve());
