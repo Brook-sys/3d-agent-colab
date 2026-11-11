@@ -21,7 +21,9 @@
  *
  * Conecta no DevTools do próprio Chromium (--remote-debugging-port=9222) e
  * responde `Page.handleJavaScriptDialog {accept:false}` para cada diálogo.
- * Se o Chromium reiniciar, o loop volta a procurar a página.
+ * Se o Chromium reiniciar, o loop volta a procurar a página. Se a PÁGINA
+ * navegar no mesmo alvo, o loop também reinicia — navegação não fecha o socket,
+ * e era aí que ele emperrava (ver `vigiar`).
  */
 import WS from "ws";
 import fs from "node:fs";
@@ -250,6 +252,17 @@ async function listarPaginas() {
 /**
  * `soRecarregar`: conexão de vida curta — liga, atende os pedidos de recarga e
  * sai. Sem isso, a vigilância de diálogos e a recarga brigam pela mesma sessão.
+ *
+ * A conexão de vigilância termina de DOIS jeitos, e o segundo é a razão deste
+ * comentário: quando o socket fecha (Chromium reiniciou, renderer morreu) e
+ * quando a PÁGINA navega no mesmo alvo. Navegação no mesmo target NÃO fecha o
+ * socket — medido neste deployment (boot de 04:12, navegação de recuperação às
+ * 04:41): o companheiro seguiu com UM socket ESTABLISHED para o 9222, preso a
+ * uma sessão que nunca mais reconfigurou nada. A sessão antiga continuava
+ * entregando eventos (o download das 05:13 chegou por ela), então o sintoma não
+ * é "fico surdo" — é "nunca mais reaplico `setDownloadBehavior`, nunca mais
+ * preparo o kiosk, e um pedido de recarga fica sem resposta até o container
+ * reiniciar". Antes desta correção, só um restart fechava o socket.
  */
 function vigiar(alvo, soRecarregar = false) {
     return new Promise((resolve) => {
@@ -273,56 +286,133 @@ function vigiar(alvo, soRecarregar = false) {
                     }
                 }, 5000);
             });
+        // `prepararKiosk` fala em expressões JavaScript (`avaliar`), não em
+        // métodos CDP (`enviar`). Passar `enviar` direto seria sintaticamente
+        // válido e semanticamente morto: o CDP receberia "Boolean(...)" como
+        // nome de método, responderia com erro, e o `undefined` que voltasse
+        // viraria "app não ficou pronto em 20 s" — um diagnóstico certo na
+        // forma e errado na causa. É a armadilha que o AGENTS.md registra.
+        const avaliar = async (expression) => {
+            const r = await enviar("Runtime.evaluate", { expression, returnByValue: true });
+            return r?.result?.result?.value;
+        };
+        // A preparação é disparada pela abertura da conexão e por cada
+        // navegação. Duas em paralelo falam com a mesma ponte e o log passa a
+        // contar duas verdades contraditórias sobre o mesmo documento.
+        let preparando = false;
+        const prepararDeNovo = async () => {
+            if (preparando) return;
+            preparando = true;
+            try {
+                await prepararKiosk(alvo, avaliar);
+            } finally {
+                preparando = false;
+            }
+        };
+        // Só depois de configurada a conexão uma navegação significa
+        // "reconfigurar": a primeira carga da página também dispara
+        // `Page.frameNavigated` e `Page.loadEventFired`, e reagir a ela
+        // religia e desliga a conexão sem parar, no boot.
+        let configurada = false;
+        let fechando = false;
+        let seguranca = null;
+        const reconfigurar = (motivo) => {
+            if (fechando) return;
+            fechando = true;
+            if (seguranca) {
+                clearTimeout(seguranca);
+                seguranca = null;
+            }
+            linha("página navegou:", motivo, "— reconfigurando download, documento e IA");
+            try {
+                sock.close();
+            } catch {
+                /* já estava fechado */
+            }
+            resolve();
+        };
         sock.on("message", async (raw) => {
-            const msg = JSON.parse(String(raw));
-            if (msg.id && pendentes.has(msg.id)) {
-                pendentes.get(msg.id)(msg);
-                pendentes.delete(msg.id);
-                return;
-            }
-            if (msg.method === "Page.javascriptDialogOpening") {
-                const p = msg.params || {};
-                linha(`diálogo fechado: ${String(p.message || "").slice(0, 200)} (${p.type})`);
-                await enviar("Page.handleJavaScriptDialog", { accept: false });
-            }
-            if (msg.method === "Page.downloadProgress" && msg.params?.state === "completed") {
-                linha("download concluído em", CAPTURAS);
+            try {
+                const msg = JSON.parse(String(raw));
+                if (msg.id && pendentes.has(msg.id)) {
+                    pendentes.get(msg.id)(msg);
+                    pendentes.delete(msg.id);
+                    return;
+                }
+                if (msg.method === "Page.javascriptDialogOpening") {
+                    const p = msg.params || {};
+                    linha(`diálogo fechado: ${String(p.message || "").slice(0, 200)} (${p.type})`);
+                    await enviar("Page.handleJavaScriptDialog", { accept: false });
+                }
+                if (msg.method === "Page.downloadProgress" && msg.params?.state === "completed") {
+                    linha("download concluído em", CAPTURAS);
+                }
+                if (configurada && msg.method === "Page.frameNavigated") {
+                    const quadro = msg.params?.frame;
+                    // `parentId` vazio é o quadro principal: iframe navegando
+                    // não troca a página e não pede reconfiguração.
+                    if (quadro && !quadro.parentId && quadro.url && quadro.url !== "about:blank" && !seguranca) {
+                        // Rede de segurança: se o `loadEventFired` não vier
+                        // (navegação abortada, download), a conexão emperraria
+                        // de novo — que é exatamente o defeito corrigido aqui.
+                        seguranca = setTimeout(() => {
+                            seguranca = null;
+                            reconfigurar("o load não sinalizou em 12 s");
+                        }, 12000);
+                    }
+                }
+                // Fecha no `loadEventFired`, não no commit: fechar durante a
+                // carga deixaria a janela sem tratamento de diálogo — e diálogo
+                // sem tratamento é o que congela o renderer.
+                if (configurada && msg.method === "Page.loadEventFired") {
+                    reconfigurar("carga concluída");
+                }
+            } catch (err) {
+                linha("evento ignorado (mal-formado ou handler quebrado):", err?.message || err);
             }
         });
         sock.on("open", async () => {
-            if (soRecarregar) {
-                // Recarga não precisa de Page.enable nem de comportamento de
-                // download: a página nasce de novo e o laço externo a reconfigura.
-                await enviar("Page.reload", { ignoreCache: false });
-                await new Promise((r) => setTimeout(r, 500));
-                sock.close();
-                resolve();
-                return;
+            try {
+                if (soRecarregar) {
+                    // Recarga não precisa de Page.enable nem de comportamento de
+                    // download: a página nasce de novo e o laço externo a reconfigura.
+                    await enviar("Page.reload", { ignoreCache: false });
+                    await new Promise((r) => setTimeout(r, 500));
+                    sock.close();
+                    resolve();
+                    return;
+                }
+                linha("vigilando:", alvo.url.slice(0, 90));
+                await enviar("Page.enable");
+                // `Page.setDownloadBehavior` é por sessão de página: uma navegação
+                // pode perdê-lo, então é reaplicado a cada ciclo do laço externo.
+                await enviar("Page.setDownloadBehavior", {
+                    behavior: "allow",
+                    downloadPath: CAPTURAS,
+                    eventsEnabled: true,
+                });
+                configurada = true;
+                const pedidos = (await lerPedidos()).filter((p) => p.acao === "recarregar");
+                if (pedidos.length > 0) {
+                    linha("recarregando a página a pedido");
+                    await enviar("Page.reload", { ignoreCache: false });
+                    // A página nasce de novo e quem reconfigura é o laço externo.
+                    // Fechar aqui evita preparar o kiosk contra uma página que
+                    // está sendo descartada — o log diria "app não ficou pronto
+                    // em 20 s" por um motivo que não é o que a mensagem diz.
+                    fechando = true;
+                    try {
+                        sock.close();
+                    } catch {
+                        /* já estava fechado */
+                    }
+                    resolve();
+                    return;
+                }
+                await prepararDeNovo();
+            } catch (err) {
+                linha("ciclo de vigilância falhou (o companheiro segue vivo):", err?.message || err);
             }
-            linha("vigilando:", alvo.url.slice(0, 90));
-            await enviar("Page.enable");
-            // `Page.setDownloadBehavior` é por sessão de página: uma navegação
-            // pode perdê-lo, então é reaplicado a cada ciclo do laço externo.
-            await enviar("Page.setDownloadBehavior", {
-                behavior: "allow",
-                downloadPath: CAPTURAS,
-                eventsEnabled: true,
-            });
-            for (const pedido of (await lerPedidos()).filter((p) => p.acao === "recarregar")) {
-                linha("recarregando a página a pedido");
-                await enviar("Page.reload", { ignoreCache: false });
-            }
-            // `prepararKiosk` fala em expressões JavaScript (`avaliar`), não em
-            // métodos CDP (`enviar`). Passar `enviar` direto seria sintaticamente
-            // válido e semanticamente morto: o CDP receberia "Boolean(...)" como
-            // nome de método, responderia com erro, e o `undefined` que voltasse
-            // viraria "app não ficou pronto em 20 s" — um diagnóstico certo na
-            // forma e errado na causa. É a armadilha que o AGENTS.md registra.
-            const avaliar = async (expression) => {
-                const r = await enviar("Runtime.evaluate", { expression, returnByValue: true });
-                return r?.result?.result?.value;
-            };
-            await prepararKiosk(alvo, avaliar);
         });
         sock.on("close", () => resolve());
         sock.on("error", () => resolve());
@@ -339,10 +429,16 @@ for (;;) {
         const pedidos = await lerPedidos();
         if (pedidos.some((p) => p.acao === "recarregar")) {
             linha("recarregando a página a pedido");
-            await vigiar(alvo, true);
+            await vigiar(alvo, true).catch(() => {});
             continue;
         }
-        await vigiar(alvo);
+        // `vigiar` devolve quando o socket fecha ou quando a página navega no
+        // mesmo alvo. Um `catch` aqui é obrigatório: `vigiar` é a única coisa
+        // entre este laço e o fim do processo, e o laço não pode parar.
+        await vigiar(alvo).catch(() => {});
+        // Uma pausa curta entre ciclos: sem ela, uma página que navega em
+        // sequência giraria o laço no limite da CPU.
+        await new Promise((r) => setTimeout(r, 250));
     } else {
         await new Promise((r) => setTimeout(r, 2000));
     }
