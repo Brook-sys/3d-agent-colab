@@ -14,3 +14,10 @@ chili3d-upstream/
 *.log
 .env
 .DS_Store
+
+# Configuração LOCAL do OpenCode: carrega o endereço real do host. O valor não
+# pode ir para o repositório (regra de privacidade), e o arquivo não pode ficar
+# versionado com placeholder — o OpenCode o lê como configuração ATIVA do
+# projeto, e `SEU-HOST` não resolve em DNS (era o que derrubava o MCP
+# 3d-agent-colab com ENOTFOUND). Versionado fica o `.exemplo`, com placeholder.
+opencode.json

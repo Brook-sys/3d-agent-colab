@@ -8,7 +8,15 @@ Endpoint: `http://SEU-HOST:9001/mcp` · protocolo **2024-11-05** · stateless.
 
 ## 1. Configurar
 
-O repositório já traz um [`opencode.json`](../opencode.json) pronto. Copie para a sua configuração (global em `~/.config/opencode/opencode.json`, ou uso direto no projeto) e troque o host:
+**O `opencode.json` deste projeto é arquivo local e não é versionado.** Ele
+carrega o endereço real do host, e endereço real não vai para o repositório. O
+que está versionado é o [`opencode.json.exemplo`](../opencode.json.exemplo), com
+`SEU-HOST` no lugar do host.
+
+```sh
+cp opencode.json.exemplo opencode.json   # ou copie o bloco abaixo
+# troque SEU-HOST pelo endereço do host que roda o núcleo
+```
 
 ```json
 {
@@ -32,6 +40,12 @@ O repositório já traz um [`opencode.json`](../opencode.json) pronto. Copie par
 ```
 
 Os timeouts não são decoração: `execution: 600000` (10 min) acomoda uma publicação, que exporta STEP pelo kernel e ainda valida; `startup` cobre o boot do núcleo depois de um deploy.
+
+> **Por que o arquivo é local.** O OpenCode lê o `opencode.json` do projeto como
+> configuração **ativa**, não como sugestão. Com `SEU-HOST` dentro dele, o cliente
+> MCP tenta resolver aquele nome em DNS e o servidor vive em
+> `getaddrinfo ENOTFOUND seu-host` — foi assim que ele passou tempo demais. O
+> `.gitignore` do projeto ignora o `opencode.json` justamente por isso.
 
 ### Conferir sem cliente nenhum
 
