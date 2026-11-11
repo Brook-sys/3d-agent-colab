@@ -24,7 +24,7 @@ O que acontece no primeiro boot:
 1. o núcleo semeia `/parts` com as peças de exemplo — mas **só se o marcador `/parts/.semeadura` não existir**, e não "se o diretório estiver vazio". Um `/parts` restaurado de backup antigo, sem o marcador, recebe a semente por cima (`cp -a` sobrescreve os `spec.json` dos slugs coincidentes). Depois de um restore, confira o marcador;
 2. a sessão sobe o Chromium em kiosk e o companheiro CDP;
 3. o kiosk abre `KIOSK_URL` (`http://core:9001/?bridge=&plugin=…&part=espacador&painel=1`);
-4. a página importa a IA (porque a URL tem `?bridge=`) e o companheiro a abre sozinha;
+4. a página importa a IA (porque a URL tem `?bridge=`); o companheiro CDP **cria um documento** com a ferramenta `new_document` e só então abre o assistente — sem documento aberto, `activeView` não existe e o app recusa os comandos em silêncio (veja [uso com IA](uso-chili3d-ia.md#2-abrir-o-assistente));
 5. a ponte recebe o `hello` com as 30 ferramentas e grava `page-tools.json`.
 
 O `pull_policy: always` garante que um `up -d` puxe a imagem nova; no Portainer use **Update the stack → Repull image and redeploy**, que é o equivalente.
@@ -61,8 +61,9 @@ curl -s -X POST http://SEU-HOST:9001/mcp -H 'content-type: application/json' \
 #    NÃO está no docker logs: o start.sh redireciona o Chromium para chrome.log
 grep -a "painel ativo" /opt/3d-agent-colab/session/chrome.log | tail -3
 
-# 5. a IA embutida está na tela?
-tail -20 /opt/3d-agent-colab/session/kiosk-cdp.log | grep -i "assistente"
+# 5. o kiosk tem documento e a IA está na tela?
+grep -a "documento do kiosk\|assistente de IA" /opt/3d-agent-colab/session/kiosk-cdp.log | tail -4
+#    documento do kiosk: criado "espacador" …  ·  assistente de IA: pubsub · painel aberto
 ```
 
 A checagem 4 é a que importa: para o plugin, build verde **não** significa painel funcionando. Um erro de referência dentro do `buildPanel()` não derruba a página — só o console.
@@ -109,7 +110,7 @@ docker compose up -d                        # /parts vazio → semeado de novo
 | o que | arquivo (no container) | no host |
 |---|---|---|
 | console da página, plugin, renderer | `/data/chrome.log` | `/opt/3d-agent-colab/session/chrome.log` |
-| companheiro CDP (diálogos, download, recarga, IA) | `/data/kiosk-cdp.log` | `/opt/3d-agent-colab/session/kiosk-cdp.log` |
+| companheiro CDP (diálogos, download, recarga, documento do boot, IA) | `/data/kiosk-cdp.log` | `/opt/3d-agent-colab/session/kiosk-cdp.log` |
 | núcleo (REST, MCP, publicação) | stdout do container | `docker logs 3d-agent-colab-core` |
 | ponte WebSocket | stdout do container | `docker logs 3d-agent-colab-session` |
 
@@ -134,6 +135,7 @@ Onde procurar o quê:
 | painel não aparece | `chrome.log` | `painel ativo`, `Plugin 3D Agent` |
 | ponte não conecta | logs da sessão (stdout) | `bridge` |
 | IA não abre no kiosk | `kiosk-cdp.log` | `assistente de IA` |
+| documento do kiosk | `kiosk-cdp.log` | `documento do kiosk` |
 | `alert()` congelando | `kiosk-cdp.log` | `diálogo fechado` |
 | download do STEP | `kiosk-cdp.log` | `download concluído` |
 | publicação sem STEP | `v000N/params.json` → `diagnostico.step` | — |
@@ -150,9 +152,10 @@ Onde procurar o quê:
 | `/health` não responde | core caindo na subida | `docker logs 3d-agent-colab-core`; a causa clássica é rota com `dict \| Response` sem `response_model=None` (o import morre) |
 | `ponte.conectada: false` | kiosk perdeu a aba, ou a URL não tem `?bridge=` | conferir `KIOSK_URL`; `POST /kiosk/recarregar`; logs da sessão |
 | painel não aparece | erro de referência no `extension.js`, ou `?painel=0` | remover `painel=0` da URL; `grep -a "painel ativo" chrome.log` — **sem a linha, o plugin não rodou** |
-| ribbon sem "AI Assistant" | URL sem `?bridge=` (o módulo de IA não é importado) | adicionar `&bridge=`; ou o botão do painel faz isso |
+| ribbon sem "AI Assistant" | URL sem `?bridge=` (o módulo de IA não é importado) | adicionar `&bridge=` na URL e recarregar |
 | chave da IA não cola / some | é o comportamento previsto: só memória da aba | colar de novo após F5; ver [uso com IA](uso-chili3d-ia.md) |
-| IA não abre no kiosk | companheiro CDP não achou o botão nem o PubSub | `tail kiosk-cdp.log` → `assistente de IA:` diz qual caminho tentou |
+| botão "AI Assistant" não faz nada | não há documento aberto: `CommandService.checking()` recusa o comando em silêncio | criar um documento (`doc.new`, que é comando de aplicação) e clicar de novo |
+| IA não abre no kiosk | o painel já estava aberto (`ja-aberto`, que é o normal), ou o PubSub falhou | `grep -a "assistente de IA" kiosk-cdp.log` → diz qual caminho e se o painel apareceu |
 | publicação sem STEP | kiosk recarregado (documento na RAM) ou download bloqueado | reconstruir o documento (`run_parametric`) e publicar de novo; `kiosk-cdp.log` → `download concluído` |
 | `validar` dá "bloqueado" sempre | versão sem `model.step` | olhar `v000N/manifest.json` → `sem_step: true` |
 | "outra aba assumiu a ponte" | duas abas com `?bridge=` | recarregar a aba que perdeu |

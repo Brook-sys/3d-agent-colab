@@ -26,7 +26,7 @@ O que isso significa na prática:
 | onde | situação |
 |---|---|
 | **kiosk** (a sessão headless do container) | a `KIOSK_URL` padrão já traz `?bridge=&plugin=…`, então a IA está disponível — e o companheiro CDP a abre sozinho quando a página carrega |
-| **seu navegador** | abra com `&bridge=` na URL (ou use o botão do painel, que adiciona o parâmetro e recarrega) |
+| **seu navegador** | abra com `&bridge=` na URL — o parâmetro é o que carrega o pacote de IA |
 
 **Consequência honesta de adicionar `?bridge=` na sua máquina:** a página passa a tentar `ws://127.0.0.1:17373/ws` de 0,5 s em 0,5 s, com backoff até 8 s — porque não existe ponte rodando aí. Fica um aviso no console e linhas de WebSocket falhando na aba Rede. **Não afeta o assistente**: ele conversa direto com o provedor de IA que você configurou. O que não funciona sem ponte é o caminho inverso (um agente externo dirigir *a sua* aba).
 
@@ -36,15 +36,34 @@ Se a página for servida em HTTPS, o `WebSocket` inseguro levanta `SecurityError
 
 ## 2. Abrir o assistente
 
-Três caminhos, todos equivalentes:
-
 1. **Ribbon ▸ Manager ▸ Other ▸ AI Assistant** — o comando `ai.toggleChat`. O rótulo depende do idioma: `AI Assistant` (en), `Assistente IA` (pt-br), `AI 助手` (zh-cn).
-2. **Botão do painel** — a seção "Assistente de IA (embutido)" do painel 3D Agent Colab tem um botão que mostra o estado atual (`painel da IA: aberto/fechado`) e abre ou fecha.
-3. **Kiosk** — abre sozinho na carga da página (o companheiro CDP clica o botão da ribbon por título, com fallback em `PubSub.default.pub("toggleChatPanel")`).
+2. **Kiosk** — o companheiro CDP abre sozinho na carga da página, publicando `toggleChatPanel` no PubSub (e somente se o painel ainda não estiver aberto — o tópico alterna, publicar de novo fecharia).
 
 O painel é o custom element `chili-ai-chat`, montado pelo `Editor` do `@chili3d/ui`. Ele **começa acoplado e aberto**; arraste o cabeçalho para destacá-lo como janela flutuante e arraste de volta para re-acoplar. Envie com **Ctrl+Enter** ou o botão de envio; dá para anexar imagens.
 
 > A ribbon do kiosk foi conferida ao vivo: `Manager / Other / AI Assistant / ai.toggleChat` aparece ao lado de `Manager / Other / 3D Agent Colab / painel.panel`.
+
+### O botão da ribbon precisa de um documento aberto
+
+Não é defeito do kiosk, é regra do app: `CommandService.checking()` recusa — **em silêncio**, com um `Logger.error("No active document")` que ninguém vê — todo comando que não seja `isApplicationCommand` quando `activeView` é `undefined`. `ai.toggleChat` não é comando de aplicação.
+
+Medido neste deployment, sem documento:
+
+```
+clique no botão da ribbon   → nenhum efeito
+dispatchEvent               → nenhum efeito
+pub("executeCommand")       → nenhum efeito
+pub("toggleChatPanel")      → FUNCIONA
+```
+
+O último caminho funciona porque `editor.ts` assina o tópico `toggleChatPanel` **direto**, sem passar pelo serviço de comandos.
+
+Daí duas decisões deste projeto:
+
+- o companheiro do kiosk **cria um documento no boot** chamando a ferramenta `new_document` (que invoca `app.newDocument()` sem passar pelo `CommandService` e recusa se já houver documento — é idempotente). Com `activeView` definido, o botão da ribbon volta a funcionar e o assistente tem no que agir;
+- o caminho do companheiro para abrir a IA é **só** o PubSub. A tentativa de clique na ribbon saiu do código justamente porque parecia funcionar e não funcionava.
+
+Na sua máquina, a consequência prática é a mesma: abrir o app pelo `/` sem documento deixa o botão "AI Assistant" sem efeito até você criar um documento (menu ▸ novo, ou `doc.new` na ribbon, que **é** comando de aplicação).
 
 ---
 
@@ -71,7 +90,9 @@ Os três provedores cobrem a maioria dos serviços existentes, porque quase todo
 
 O preset **"Outro endpoint"** é para um gateway seu (LLM local, proxy corporativo, OpenRouter, LiteLLM…). Basta apontar `baseURL` e `model`; o `provider` continua sendo um dos três dialetos.
 
-O botão **Salvar configuração da IA** do painel grava provedor, endpoint e modelo no `localStorage` do navegador. O que ele **não** grava é a chave — veja a seção seguinte. Janela de contexto e profundidade de raciocínio também ficam de fora: o módulo aplica o próprio default (1.000.000) quando o campo falta, e um número errado escrito por fora só pioraria o medidor de contexto. Para esses dois campos, use a engrenagem.
+A configuração é **só na engrenagem** do cabeçalho do painel de chat. Não existe segundo lugar para configurar: o formulário que o painel 3D Agent Colab já teve foi removido, porque duplicava — de forma inferior — o que o assistente nativo oferece aqui. A engrenagem abre sozinha quando não há chave (`connectedCallback → showSettings()`), então o primeiro uso já joga você nela.
+
+O que persiste entre recargas é só o que não é segredo: `localStorage` → `chili3d.app.ai.config`. Provedor, endpoint e modelo ficam; a chave, não (seção seguinte). Janela de contexto e profundidade de raciocínio têm default do módulo (1.000.000) quando o campo falta — e deixar faltar é melhor que um número errado digitado por fora.
 
 ### A chave de API
 
@@ -185,6 +206,8 @@ Os dois caminhos de IA **não disputam**: compartilham o registro e a fila de co
 ## 7. Limitações — leia antes de confiar
 
 - **A chave evapora a cada F5.** Em sessão longa você vai colar de novo. É o preço de ela não persistir.
+- **O kiosk começa com documento vazio, não com a peça pronta.** O companheiro cria o documento no boot (`new_document`, idempotente — se o IndexedDB restaurar um, ele recusa). A consequência para o agente: o primeiro passo muda de "criar documento" para "usar o documento que está aberto", e um documento **novo** exige recarregar com outro `?part=` — não existe ferramenta de fechar documento. Geometria continua não vindo de graça: as duas peças semeadas têm **zero versões publicadas** neste deploy, então não há STEP para a IA abrir nem delta de volume para comparar.
+- **A busca por `?url=` salvaria as variáveis? Não.** Um STEP importado pela URL abriria com geometria, mas **perderia as variáveis paramétricas** — os controles do painel ficariam vazios a cada recarga. Foi por isso que a criação de documento venceu o `?url=`.
 - **Sem autenticação em lugar nenhum.** 8080 e 9001 são abertos. Quem alcança o host conversa com a IA usando *a sua* chave, publica versões e dirige o kiosk.
 - **Reconexão fantasma.** Com `?bridge=` e sem ponte, a aba tenta `ws://127.0.0.1:17373` a cada 8 s para sempre. Ruído de console, não falha.
 - **Duas abas, uma ponte.** Se duas abas com `?bridge=` disputarem a mesma ponte, a mais nova derruba a anterior com código `4002` e a aba antiga **para de tentar** ("outra aba assumiu a ponte; recarregue para retomar").

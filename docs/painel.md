@@ -14,7 +14,6 @@ Plugin do Chili3D, em **JavaScript puro, sem build**. Resumo: alterar `painel/sr
 | **comentários** | `GET/POST /parts/<slug>/anotacoes`, ancorados na seleção/variável atual | 3 s |
 | **conversa** | `GET/POST /mensagens` — a **mesma fila** que o terminal do agente lê | 3 s |
 | **publicar** | `POST /parts/<slug>/publicar` | sob demanda |
-| **assistente de IA** | `localStorage:chili3d.app.ai.config` + estado de `chili-ai-chat` | 3 s |
 
 Duas linhas de espelho no topo mostram a peça e a versão atuais e o estado da ponte.
 
@@ -102,16 +101,13 @@ setInterval(refreshTarefas, 3000);
 
 ---
 
-## A seção da IA embutida
+## A IA: só o `guide`
 
-Presets de provedor (openai-compatible, openai-responses, anthropic-compatible e um campo livre), botão **Salvar configuração da IA** e um espelho de estado com o botão de abrir/fechar.
+O painel **não** tem seção de IA, e isso é decisão. Ele já teve um formulário de provedor, endpoint e modelo, com botão de salvar e de abrir/fechar o assistente — e o formulário era redundante *e inferior* ao que o Chili3D já oferece: sem campo de chave, sem `reasoningEffort`, sem `contextWindow`, sem handoff para o gerenciador de senhas do navegador. Configurar a IA é função da engrenagem do painel nativo, e é lá que mora agora.
 
-Duas regras que o código impõe e a documentação repete:
+O que sobra do painel é o único gancho de IA que um plugin realmente tem: o **`guide`**. Duas seções entram no `AppGuideStore` e a skill `app-guide` do assistente as lê sob demanda — é assim que a IA embutida sabe que `document_variables` é a fonte da verdade paramétrica e que não existe ferramenta de fechar documento. Nenhum outro ponto de extensão do app é alcançável sem fork (presets de provedor, campos novos no formulário e skills novas são `const`/array fixo no fonte do `@chili3d/ai`).
 
-- **A chave de API nunca é gravada.** `salvarIaConfig()` a descarta antes de escrever. O que vai para `localStorage` é `provider`, `baseURL` e `model` — janela de contexto e esforço de raciocínio ficam de fora, porque o módulo de IA preenche os próprios defaults e um valor escrito por fora só atrapalharia o medidor.
-- **Sem `?bridge=` a seção diz que a IA está indisponível** e oferece um botão que adiciona o parâmetro e recarrega.
-
-Detalhe de implementação que já mordeu: o botão de abrir a IA procura o botão da ribbon **por `title`**, porque `RibbonPushButton` não expõe o nome do comando como atributo no DOM. Se nenhum título casar (troca de idioma), o fallback é `PubSub.default.pub("toggleChatPanel")`.
+O que o companheiro do kiosk faz pela IA — criar o documento no boot e abrir o painel por `PubSub.pub("toggleChatPanel")` — está em `session/kiosk-cdp.mjs`, com a medição que motiva os dois. O motivo de o clique na ribbon ter sido removido está em [uso com IA](uso-chili3d-ia.md#2-abrir-o-assistente).
 
 ---
 
@@ -121,7 +117,7 @@ O CI roda `node --check` no arquivo e falha o build em erro de sintaxe. Isso **n
 
 ```sh
 grep -a "painel ativo" /opt/3d-agent-colab-session/chrome.log | tail -3
-# [painel] painel ativo · api=http://…:9001 · parte=espacador · ia=disponível
+# [painel] painel ativo · api=http://…:9001 · parte=espacador
 ```
 
 **Não é `docker logs`:** o `start.sh` redireciona o Chromium para esse arquivo (e o companheiro CDP para `kiosk-cdp.log`), então o stdout do container não tem o console. Sem a linha acima, o plugin não chegou a rodar — e a página abre normal, o que é o pior dos sintomas.

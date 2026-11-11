@@ -21,7 +21,7 @@ Leia o [README](README.md) antes. Este arquivo trata do que **não** fazer e do 
 ```
 core/      FastAPI + MCP (13 ferramentas) + registro /parts + portal FDM + serve o app e o painel
 session/   ponte WebSocket (protocolo do Chili3D) + Chromium headless + companheiro CDP
-painel/    plugin do Chili3D em JS puro, sem build (variáveis, comentários, chat, IA)
+painel/    plugin do Chili3D em JS puro, sem build (variáveis, comentários, chat, guia da IA)
 partes/    semente do registro, copiada no primeiro boot quando falta o marcador /parts/.semeadura
 docs/      documentação (arquitetura, uso, operação, painel)
 deploy/    ciclo curto de desenvolvimento: build local + compose local
@@ -48,7 +48,8 @@ Antes de declarar qualquer coisa pronta:
 | MCP | `curl -X POST http://SEU-HOST:9001/mcp -d '{"jsonrpc":"2.0","id":1,"method":"initialize",…}'` | `protocolVersion: 2024-11-05` |
 | health + ponte | `curl -s http://SEU-HOST:9001/health` | `conectada: true`, 30 ferramentas |
 | painel de fato | `grep -a "painel ativo" /data/chrome.log` no container da sessão | a linha do painel |
-| IA embutida | `tail` de `/data/kiosk-cdp.log` no container da sessão | `assistente de IA` |
+| documento do kiosk | `grep -a "documento do kiosk" /data/kiosk-cdp.log` no container da sessão | `criado "<parte>"` ou `já havia documento` |
+| IA embutida | `grep -a "assistente de IA" /data/kiosk-cdp.log` no container da sessão | `pubsub · painel aberto` |
 
 Os dois primeiros logs **não** estão no `docker logs`: o `start.sh` redireciona o Chromium para `$DATA_DIR/chrome.log` e o companheiro CDP para `$DATA_DIR/kiosk-cdp.log`. Procurar no stdout do container não encontra nada — e o sintoma (página abre, painel não) já é o pior possível.
 
@@ -64,6 +65,8 @@ Se uma dessas falhar, a tarefa **não** está pronta, por mais que o build tenha
 - **`export_nodes` não devolve os bytes do STEP.** Devolve metadados e entrega como download; o núcleo busca em `GET /capturas/<nome>` e espera até 30 s. Não existe atalho.
 - **Não há ferramenta de fechar documento.** `new_document` recusa com documento aberto; trocar de peça é mudar `?part=` e recarregar.
 - **`?bridge=` importa a IA.** Sem esse parâmetro na URL não existe painel de IA — e com ele, num navegador sem ponte, a aba tenta `ws://127.0.0.1:17373` a cada 8 s para sempre. É ruído, não falha.
+- **Sem documento aberto, o app recusa comandos em silêncio.** `CommandService.checking()` (`packages/app/src/services/commandService.ts`, linha 133) derruba todo comando que não seja `isApplicationCommand` quando `activeView` é `undefined`, com um `Logger.error("No active document")` que ninguém vê. Foi medido aqui: sem documento, clicar no botão "AI Assistant" da ribbon, `dispatchEvent` e publicar `executeCommand` direto **nenhum dos três teve efeito**; só `PubSub.pub("toggleChatPanel")` funcionou, porque `editor.ts` assina esse tópico direto. Por isso o kiosk cria um documento no boot (`new_document` pelo companheiro CDP) e por isso o caminho de clique na ribbon saiu do nosso código.
+- **`?part=` não abre documento — só o nosso painel lê.** O app abre arquivo por `?url=`/`?model=` (`packages/web/src/startupParams.ts`). Uma `KIOSK_URL` com `?part=` deixa a página na tela inicial: `hasActiveDocument: false`, e é a raiz da armadilha acima. Criar documento pela ponte (`new_document`, que chama `app.newDocument()` sem passar pelo `CommandService`) é idempotente — recusa se já houver um.
 - **Duas abas com `?bridge=` disputam a ponte** (4002, terminal): a nova derruba a anterior.
 - **A semeadura do `/parts` é guardada por marcador, não por diretório vazio.** O `entrypoint.sh` copia a semente (`cp -a`) quando `/parts/.semeadura` **não existe** — um `/parts` com conteúdo mas sem o marcador (restore de backup antigo) é sobrescrito nos slugs coincidentes. Antes de restaurar backup, confira o marcador; para registro limpo, esvazie o diretório com a stack parada — e confirme com o usuário, porque é irreversível.
 - **Logs Docker têm prefixo binário de 8 bytes**; `/proc/1/fd/1` num `exec` trava; `/containers/<id>/wait` estoura em timeout de 120 s.

@@ -73,7 +73,7 @@ networks:
 
 O `&bridge=` não é enfeite: é o que faz a página importar o pacote de IA. Sem ele o assistente **não existe** — nem ribbon, nem comando. No seu navegador não há ponte rodando, então a aba vai tentar `ws://127.0.0.1:17373` a cada 8 s e falhar: é ruído de console, não defeito. O kiosk já abre com esse parâmetro.
 
-**4. Ligue a IA embutida**: clique em **Manager ▸ Other ▸ AI Assistant** (no kiosk ela já abre sozinha), cole a chave na engrenagem e escolha o provedor. Veja [uso com IA no Chili3D](docs/uso-chili3d-ia.md).
+**4. Ligue a IA embutida**: crie um documento primeiro (**New** na tela inicial — sem documento aberto o app recusa o comando em silêncio), clique em **Manager ▸ Other ▸ AI Assistant**, cole a chave na engrenagem e escolha o provedor. No kiosk o documento é criado no boot e a IA já abre sozinha. Veja [uso com IA no Chili3D](docs/uso-chili3d-ia.md).
 
 **5. Aponte o agente** para `http://SEU-HOST:9001/mcp`. Veja [uso pelo OpenCode](docs/uso-opencode.md).
 
@@ -120,7 +120,7 @@ Detalhes, protocolo, trade-offs e os modos de falha medidos: [docs/arquitetura.m
 ```
 core/            FastAPI + MCP + registro + build123d + servidor do app/painel
 session/         ponte WebSocket + kiosk Chromium + companheiro CDP
-painel/          plugin do Chili3D (JS puro, sem build): variáveis, comentários, chat, IA
+painel/          plugin do Chili3D (JS puro, sem build): variáveis, comentários, chat, guia da IA
 partes/          semente do registro (espacador, suporte-l) — copiada no primeiro boot
 deploy/          ciclo curto de desenvolvimento (build local + compose local)
 docs/            documentação (este índice)
