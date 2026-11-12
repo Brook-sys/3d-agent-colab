@@ -28,8 +28,9 @@ services:
       # aponta para http://SEU-HOST:8080/relay — SEM /v1, porque o /v1 já
       # está aqui: o proxy monta RELAY_URL/<caminho>, e um baseURL com /v1
       # pediria /v1/v1/... no relay. A chamada sai pela MESMA origem da
-      # página — sem CORS no meio. A chave continua sendo colada no painel
-      # do assistente e vem no header de cada pedido; o núcleo não a guarda.
+      # página — sem CORS no meio. A chave continua sendo colada no assistente
+      # (o chat nativo do app) e vem no header de cada pedido; o núcleo não a
+      # guarda.
       RELAY_URL: ${RELAY_URL:-}
     volumes:
       - /opt/3d-agent-colab/parts:/parts
