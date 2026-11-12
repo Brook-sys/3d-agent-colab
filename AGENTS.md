@@ -67,6 +67,7 @@ só se mede em deploy, com chave válida.
 | healthcheck | `curl -s http://SEU-HOST:8080/healthz` | `{"ok":true,...}` — e isso **não** prova o relay |
 | app servido | `curl -s -o /dev/null -w %{http_code} http://SEU-HOST:8080/` | `200` |
 | preflight | `curl -s -o /dev/null -w %{http_code} -X OPTIONS http://SEU-HOST:8080/v1/chat/completions` | `204` — respondido por nós |
+| URL Base do assistente | configuração no app | `http://SEU-HOST:8080/v1` — **com `/v1`**, o deste servidor |
 | proxy | `curl -s -H 'authorization: Bearer ...' http://SEU-HOST:8080/v1/models` | a lista de modelos do **relay real** |
 | assistente | abrir o app, colar a chave, mandar "oi" | resposta do modelo, não "Connection error." |
 
@@ -89,6 +90,15 @@ passado.
   `/%2e%2e/` chega ao servidor como `/segredo.txt`. E `/..%2f..%2fsegredo.txt`,
   medido contra o servidor com a proteção removida, dá 404 — sobe dois níveis e
   aponta para `/tmp`. Só entram no teste caminhos que, medidos, furam.
+- **A URL Base do assistente leva `/v1`; a `RELAY_URL` do container, não.** São
+  dois `/v1` de servidores diferentes. O SDK cola `/chat/completions` no baseURL
+  (`completions.ts`), então a URL digitada precisa terminar em `/v1` para o pedido
+  sair como `/v1/chat/completions` — o caminho que o proxy intercepta. Sem o
+  `/v1`, o pedido cai no fallback de SPA e volta **200 text/html**: o SDK esperava
+  JSON, estoura, e a mensagem é o mesmo `"Connection error."` da causa original.
+  Um 200 que parece sucesso e uma mensagem que não aponta para a configuração —
+  armadilha das boas. Provedor Anthropic é o inverso (`{baseURL}/v1/messages`,
+  URL sem `/v1`) e não fala com o relay local.
 - **`RELAY_URL` não leva `/v1`.** O `/v1` é este servidor que põe (`/v1${resto}`),
   e um default com `/v1` pediria `/v1/v1/...` no relay. O sintoma é 404 do relay,
   que não aponta para o compose.

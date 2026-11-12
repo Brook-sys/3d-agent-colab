@@ -176,6 +176,36 @@ interface, modelo respondendo — **só se mede em deploy com chave válida**, e
 está coberta pela suíte (`teste/`): o relay de lá é falso, de propósito. Sem
 chave válida não há como medir essa etapa, e ela não foi medida.
 
+### A configuração certa no assistente, que tem uma pegadinha
+
+**Provedor:** o OpenAI-compatível (o padrão do app). Anthropic é outro dialeto.
+
+**URL Base:** `http://SEU-HOST:8080/v1` — **com `/v1`**, e o `/v1` é o **deste
+servidor**, não o do relay.
+
+A razão é o SDK, não gosto: `completions.ts` cria o cliente OpenAI com o
+`baseURL` que o usuário digitou, e o SDK cola o caminho por conta própria
+(`this._client.post('/chat/completions', …)`). Para o pedido sair como
+`/v1/chat/completions` — o caminho que este servidor intercepta — a URL digitada
+precisa terminar em `/v1`.
+
+O que acontece sem o `/v1`, e por que o sintoma engana: o pedido sai como
+`/chat/completions`, não bate no proxy, cai no **fallback de SPA** deste servidor
+e volta `200 text/html` com o index.html. O SDK esperava JSON, recebe HTML, e
+estoura com o mesmo `"Connection error."`. Ou seja: a URL errada reproduz o
+sintoma original com uma causa diferente — e o 200 apaixonante piora o
+diagnóstico, porque não parece erro.
+
+Duas armadilhas de configuração, ambas já medidas:
+
+- `RELAY_URL` (variável do container) leva a raiz **sem** `/v1`; a **URL Base** do
+  assistente leva a origem **com** `/v1`. Os dois `/v1` são de servidores
+  diferentes. Confundi-los dá 404 do relay ou o HTML do SPA, nenhum dos quais
+  aponta para a configuração.
+- provedor **Anthropic** bate em `{baseURL}/v1/messages` (`anthropic.ts`), então a
+  URL Base dele fica **sem** `/v1` — e o relay local, OpenAI-compatível, não fala
+  esse dialeto.
+
 ---
 
 ## Como reproduzir o diagnóstico

@@ -56,8 +56,20 @@ curl -s -o /dev/null -w '%{http_code}' -X OPTIONS http://SEU-HOST:8080/v1/chat/c
 
 Para usar o assistente: abra o app, cole a chave do relay na interface (ela fica
 na memória do navegador e evapora a cada recarregamento — é decisão do Chili3D,
-não deste repo) e aponte o `baseURL` para a **própria origem**, sem `/v1`:
-`http://SEU-HOST:8080`. O `/v1` é este servidor que põe.
+não deste repo) e configure o **provedor OpenAI-compatível** com a URL Base
+`http://SEU-HOST:8080/v1` — **com `/v1`**, apontando para a própria origem.
+
+O `/v1` na URL não é o do relay, e confundir os dois já custeu uma tentativa: o
+SDK da OpenAI cola `/chat/completions` no baseURL (`completions.ts`:
+`this._client.post('/chat/completions')`), então a URL que o usuário digita
+**precisa** terminar em `/v1` para o pedido sair como `/v1/chat/completions` —
+que é o caminho que este servidor intercepta. Sem o `/v1`, o pedido bate em
+`/chat/completions`, cai no fallback de SPA e devolve o index.html: o SDK recebe
+HTML onde esperava JSON e estoura com "Connection error." de novo.
+
+Provedor **Anthropic** é outro dialeto: aquele SDK bate em `{baseURL}/v1/messages`
+(`anthropic.ts`), e a URL Base precisa ficar **sem** `/v1`. O relay local é
+OpenAI-compatível — use o provedor padrão.
 
 ## Configuração
 
