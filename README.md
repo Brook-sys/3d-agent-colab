@@ -46,18 +46,26 @@ O deploy é pelo Portainer: a stack aponta para `ghcr.io/brook-sys/chili3d:main`
 o host Docker só faz o pull. Nada de toolchain, nada de Node, nada de Python na
 máquina.
 
-Para conferir que subiu:
+Para conferir que subiu (`8081` enquanto a stack antiga conviver; volta a `8080`
+quando ela sair — ver `PORTA_APP`):
 
 ```sh
-curl -s http://SEU-HOST:8080/healthz          # {"ok":true,"servico":"chili3d","relay":"..."}
-curl -s -o /dev/null -w '%{http_code}' -X OPTIONS http://SEU-HOST:8080/v1/chat/completions
+curl -s http://SEU-HOST:8081/healthz          # {"ok":true,"servico":"chili3d","relay":"..."}
+curl -s -o /dev/null -w '%{http_code}' -X OPTIONS http://SEU-HOST:8081/v1/chat/completions
 # 204 — o preflight é respondido por nós, não repassado ao relay
 ```
 
 Para usar o assistente: abra o app, cole a chave do relay na interface (ela fica
 na memória do navegador e evapora a cada recarregamento — é decisão do Chili3D,
-não deste repo) e configure o **provedor OpenAI-compatível** com a URL Base
-`http://SEU-HOST:8080/v1` — **com `/v1`**, apontando para a própria origem.
+não deste repo), configure o **provedor OpenAI-compatível** com a URL Base
+`http://SEU-HOST:8081/v1` — **com `/v1`**, apontando para a própria origem — e o
+modelo `topmodel`. A chave é a do **relay** (a tela de chaves do 9router), não uma
+chave de provedor de modelo.
+
+Medido em deploy, com chave válida: `GET /v1/models` → `200` com a lista do relay,
+e `POST /v1/chat/completions` → `200` com a resposta do modelo, em JSON e em
+streaming. O que não está medido é o clique dentro da interface — o sandbox de
+desenvolvimento não alcança o host.
 
 O `/v1` na URL não é o do relay, e confundir os dois já custeu uma tentativa: o
 SDK da OpenAI cola `/chat/completions` no baseURL (`completions.ts`:
@@ -109,17 +117,18 @@ produção. Os detalhes estão em [teste/README.md](teste/README.md).
 
 Este repositório é um **protótipo**. As fragilidades são reais, não teóricas:
 
-- **A última milha não foi medida.** A suíte usa um relay falso. O teste com
-  **chave válida e modelo real** — assistente apontado, chave colada, modelo
-  respondendo — só se faz em deploy, e não foi feito. Até ser feito, a correção
-  está provada até a borda do navegador, e não além dela.
-- **Sem autenticação em lugar nenhum.** Quem alcança a porta 8080 alcança o relay
-  pela nossa origem, sem barreira de CORS no caminho. Queimar cota do relay não
-  exige chave de ninguém — mas usar um **modelo** exige a chave, e ela não está
-  no servidor.
+- **A última milha está medida até a borda da interface.** A suíte usa um relay
+  falso. Em deploy, com chave válida e modelo real, o pedido pelo proxy foi
+  `200` com resposta do modelo, em JSON e em streaming. O que ainda falta é o
+  passo **dentro do app** — abrir a interface, colar a chave, mandar "oi" e ver a
+  resposta —, porque o sandbox de desenvolvimento não alcança o host.
+- **Sem autenticação em lugar nenhum.** Quem alcança a porta publicada alcança o
+  relay pela nossa origem, sem barreira de CORS no caminho. Queimar cota do relay
+  não exige chave de ninguém — mas usar um **modelo** exige a chave, e ela não
+  está no servidor.
 - **Sem limite de taxa.** Existem teto de corpo (1 MB) e tempo de espera do relay
   (60 s), e ambos são recusas claras — mas nada impede uma enxurrada de pedidos
-  pequenos e legítimos. Quem alcança a porta 8080 dispara contra o relay à
+  pequenos e legítimos. Quem alcança a porta publicada dispara contra o relay à
   vontade; a única trava é a chave, que só o usuário tem.
 - **O proxy não filtra caminhos.** `/v1/*` vai integralmente para o relay, o que
   for pedido. Num relay OpenAI-compatível isso é a API toda; se o relay tiver

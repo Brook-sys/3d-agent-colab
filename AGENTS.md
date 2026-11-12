@@ -64,12 +64,16 @@ só se mede em deploy, com chave válida.
 | trava da versão | `sed -n 's/^CHILI3D_REF=//p' chili3d.ref` e conferir o `ARG` no Dockerfile | os dois batem (o CI também confere) |
 | coerência do relay | `RELAY_URL` no compose sem `/v1` no fim | `http://9router:20128` |
 | imagem builda | `./deploy/build-local.sh` | termina sem erro e lista `chili3d-dev` |
-| healthcheck | `curl -s http://SEU-HOST:8080/healthz` | `{"ok":true,...}` — e isso **não** prova o relay |
-| app servido | `curl -s -o /dev/null -w %{http_code} http://SEU-HOST:8080/` | `200` |
-| preflight | `curl -s -o /dev/null -w %{http_code} -X OPTIONS http://SEU-HOST:8080/v1/chat/completions` | `204` — respondido por nós |
-| URL Base do assistente | configuração no app | `http://SEU-HOST:8080/v1` — **com `/v1`**, o deste servidor |
-| proxy | `curl -s -H 'authorization: Bearer ...' http://SEU-HOST:8080/v1/models` | a lista de modelos do **relay real** |
+| healthcheck | `curl -s http://SEU-HOST:8081/healthz` | `{"ok":true,...}` — e isso **não** prova o relay |
+| app servido | `curl -s -o /dev/null -w %{http_code} http://SEU-HOST:8081/` | `200` |
+| preflight | `curl -s -o /dev/null -w %{http_code} -X OPTIONS http://SEU-HOST:8081/v1/chat/completions` | `204` — respondido por nós |
+| URL Base do assistente | configuração no app | `http://SEU-HOST:8081/v1` — **com `/v1`**, o deste servidor (8081 só na transição) |
+| proxy | `curl -s -H 'authorization: Bearer <chave do relay>' http://SEU-HOST:8081/v1/models` | a lista de modelos do **relay real** |
+| proxy, ao vivo | `POST http://SEU-HOST:8081/v1/chat/completions` com chave válida | `200`, corpo do modelo — e **confirme antes que a chave chegou** |
 | assistente | abrir o app, colar a chave, mandar "oi" | resposta do modelo, não "Connection error." |
+
+A porta é `8081` enquanto a stack antiga conviver (`PORTA_APP=8081`); volta a
+`8080` quando ela sair.
 
 Se uma dessas falhar, a tarefa **não** está pronta, por mais que o build tenha
 passado.
@@ -86,6 +90,16 @@ passado.
   escritos no fim. As duas correções estão nos cenários, com a medição que as
   justifica. Ao acrescentar cenário aqui, pergunte primeiro o que o cliente
   realmente envia.
+- **Controle vacuo: o "teste de comparação" que não compara nada.** MEDIDO, e
+  custou horas: um cenário que provava "o proxy repassa a chave" rodava com
+  `process.env.CHAVE_TESTE` **sem `Env` no corpo do `exec` do Portainer** — a
+  variável nunca chegou, o header saiu `Authorization: Bearer undefined`, e o 401
+  do relay (que usa a mesma resposta para chave inválida e chave ausente) foi lido
+  como "a chave está errada". O controle comparava dois caminhos com a mesma
+  chave podre nos dois. Antes de comparar, imprima o que chegou: uma linha com o
+  comprimento do valor teria fechado o caso em cinco minutos. O `exec` do
+  Portainer **não** herda ambiente do script: variável entra por `Env: ["X=..."]`
+  no `POST /containers/{id}/exec`.
 - **Caminho de travessia que o cliente normaliza não testa nada.** MEDIDO:
   `/%2e%2e/` chega ao servidor como `/segredo.txt`. E `/..%2f..%2fsegredo.txt`,
   medido contra o servidor com a proteção removida, dá 404 — sobe dois níveis e
