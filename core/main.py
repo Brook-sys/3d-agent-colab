@@ -4,19 +4,15 @@ Núcleo do 3D Agent Colab.
 Um único processo FastAPI que serve quatro coisas:
 
   1. REST  (/parts, /mensagens, /anotacoes, /estado-plugin, /ponte/*)
-     usado pelo painel (plugin Chili3D) e por qualquer cliente HTTP;
+     usado por clientes HTTP — e, pelo proxy /relay, pela IA do app;
   2. MCP streamable-http em /mcp  — as ferramentas que o agente chama;
   3. arquivo de registro em /parts/<slug>/vN/ com git;
-  4. estático: o app Chili3D (/app/static/dist) e o painel (/painel/).
+  4. estático: o app Chili3D (/app/static/dist).
 
 O núcleo nunca é a fonte da verdade da geometria: a geometria vive no
 documento Chili3D (controlado pela ponte) ou num script build123d. O núcleo
 arquiva, mede, valida e publica.
 
-O item 4 vivia num nginx à parte. Servindo tudo no mesmo processo, o app e o
-painel ficam no mesmo host — que é o que a regra do PluginManager exige — e a
-stack passa a dois containers. O custo dessa troca está no bloco "estático",
-no fim deste arquivo, e foi anotado lá.
 """
 from __future__ import annotations
 
@@ -37,7 +33,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 # ----------------------------------------------------------------- config
@@ -488,7 +484,8 @@ def extract_params(code: str) -> dict[str, Any]:
 
 app = FastAPI(title="3D Agent Colab", version="1.0.0")
 
-# O painel é servido pelo nginx (outra origem) e bate aqui no navegador do usuário.
+# O navegador bate aqui direto: app e API são a mesma origem. O proxy /relay
+# existe justamente para que a IA do app alcance o relay sem CORS no meio.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1017,7 +1014,7 @@ def mcp_mensagens() -> dict[str, Any]:
 
 @tool(
     "enviar_mensagem",
-    "Escreve uma mensagem na fila compartilhada (aparece no painel web).",
+    "Escreve uma mensagem na fila compartilhada (o agente a le por mensagens).",
     {
         "type": "object",
         "properties": {"texto": {"type": "string"}, "parte": {"type": "string"}},
@@ -1039,7 +1036,7 @@ def mcp_anotacoes(slug: str) -> dict[str, Any]:
 
 @tool(
     "estado_plugin",
-    "Último estado reportado pelo painel (plugin) de cada peça.",
+    "Estado reportado por plugin, quando existir algum (nenhum no deploy atual).",
     {"type": "object", "properties": {}},
 )
 def mcp_estado_plugin() -> dict[str, Any]:
@@ -1139,16 +1136,146 @@ async def mcp_get() -> dict[str, Any]:
     return {"erro": "use POST para chamadas MCP (streamable-http)"}
 
 
+# ------------------------------------------------------- proxy do relay de IA
+#
+# O assistente de IA embutido no Chili3D chama o provedor DIRETO do navegador.
+# Quando o provedor é um relay local, a chamada morre no preflight — MEDIDO:
+# `OPTIONS /v1/chat/completions` no relay responde 401 sem nenhum header
+# `Access-Control-Allow-*`, o Chrome não envia o POST, e o assistente acusa
+# `Failed to fetch`. `api.anthropic.com`, por contraste, devolve
+# `access-control-allow-origin: *` e a lista de headers do SDK. Ou seja: com
+# chave pública o assistente funciona; com o relay da casa, não.
+#
+# A saída é servir o relay pela MESMA origem da página: `/relay/<caminho>` vai
+# para `RELAY_URL/<caminho>`. Mesma origem não tem CORS — não existe preflight,
+# não existe o que bloquear. Na engrenagem do assistente fica
+# `baseURL: http://SEU-HOST:8080/relay`, e o SDK completa o caminho. O
+# `/v1` não vai no baseURL porque já está no RELAY_URL: `RELAY_URL/<caminho>`
+# é a forma do alvo, e `/relay/v1/...` pediria `/v1/v1/...` no relay.
+# MEDIDO com esta rota no ar: o preflight `OPTIONS` não chega ao relay — o
+# `CORSMiddleware` do próprio núcleo (`allow_origins=["*"]`, acima) o responde
+# com 200 e `access-control-allow-origin: *`. Same-origin continua sendo o
+# caminho recomendado (aí não há preflight nenhum), mas cross-origin pelo
+# `/relay/` também passa.
+#
+# A chave NÃO passa por aqui guardada: o usuário a cola na engrenagem do
+# assistente, ela vem no header `Authorization` de cada pedido e é repassada sem
+# ser lida. O núcleo não a conhece, não a registra em log e não a persiste.
+#
+# O que este proxy expõe, sem maquiar:
+#   - o núcleo passa a encaminhar tráfego de LLM. A porta 8080 já é aberta e sem
+#     autenticação (ver AGENTS.md), então quem alcança o host alcança este
+#     caminho — mas ainda precisa de uma chave válida do relay, e essa só quem a
+#     tem apresenta. Nenhum sigilo nosso atravessa o proxy.
+#   - o relay passa a ver o IP do núcleo no lugar do navegador: rate limit e
+#     registro de acesso dele ficam referentes ao container, não à máquina.
+#   - o corpo do pedido é lido inteiro antes de seguir (`await request.body()`),
+#     porque o assistente envia a conversa completa de uma vez. Uma conversa
+#     grande vira um buffer proporcional — não é streaming de upload.
+#   - o `timeout` de 600 s vale para cada LEITURA, não para a resposta inteira:
+#     um modelo que silencie por mais de dez minutos no meio do stream tem a
+#     conexão cortada. Modelo lento e resposta longa passam; modelo morto, não.
+#
+# `RELAY_URL` é dado do ambiente do usuário e por isso não tem default que
+# resolva: sem ele a rota responde 503 dizendo o que falta, em vez de tentar
+# alcançar um endereço inventado.
+
+RELAY_URL = os.environ.get("RELAY_URL", "").rstrip("/")
+
+# Cabeçalhos que não se repassam. Os de salto (`hop-by-hop`) são da ligação
+# navegador<->núcleo, não do pedido. O `content-length` sai porque repassar o
+# original com o corpo relido daria 400 em gateway. O `accept-encoding` e o
+# `content-encoding` saem porque a resposta chega descomprimida pelo urllib —
+# devolver os headers originais faria o navegador tentar descomprimir duas
+# vezes e entregar lixo no assistente.
+NAO_REPASSADOS = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "host",
+        "content-length",
+        "accept-encoding",
+        "content-encoding",
+    }
+)
+
+
+@app.api_route(
+    "/relay/{caminho:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+async def proxy_relay(request: Request, caminho: str):
+    if not RELAY_URL:
+        return JSONResponse(
+            {
+                "erro": "RELAY_URL não está configurado neste núcleo",
+                "como": "defina RELAY_URL no ambiente do container core (ex.: http://SEU-HOST:20128/v1)",
+            },
+            status_code=503,
+        )
+
+    alvo = f"{RELAY_URL}/{caminho}"
+    if request.url.query:
+        alvo = f"{alvo}?{request.url.query}"
+
+    corpo = await request.body()
+    cabecalhos = {
+        chave: valor
+        for chave, valor in request.headers.items()
+        if chave.lower() not in NAO_REPASSADOS
+    }
+    pedido = urllib.request.Request(
+        alvo, data=corpo or None, headers=cabecalhos, method=request.method
+    )
+
+    try:
+        resposta = urllib.request.urlopen(pedido, timeout=600)
+    except urllib.error.HTTPError as err:
+        # O erro do provedor precisa chegar ao assistente TAL QUAL: 401 de chave
+        # e 400 de campo desconhecido são a informação que ele usa para escrever
+        # a mensagem. Engolir o status aqui transformaria um 401 explicativo num
+        # "Failed to fetch", que foi justamente o defeito que motivou a rota.
+        return Response(
+            content=err.read(),
+            status_code=err.code,
+            media_type=err.headers.get("Content-Type") or "application/json",
+        )
+    except Exception as err:
+        return JSONResponse({"erro": f"relay inalcançável: {err}"}, status_code=502)
+
+    def blocos():
+        try:
+            while True:
+                dados = resposta.read(8192)
+                if not dados:
+                    return
+                yield dados
+        finally:
+            resposta.close()
+
+    return StreamingResponse(
+        blocos(),
+        status_code=resposta.status,
+        media_type=resposta.headers.get("Content-Type"),
+    )
+
+
 # ------------------------------------------------------------------ estático
 #
-# O núcleo também serve o app compilado (Chili3D) e o painel em /painel/. Antes
-# isso era um nginx em outro container; com os dois no mesmo processo, a regra
-# do PluginManager — `?plugin=` precisa ter o MESMO host da página — fica
-# satisfeita de graça, sem `location ^~` nem alias.
+# O núcleo também serve o app compilado (Chili3D). Antes havia um nginx em outro
+# container; com o app no mesmo processo a regra do PluginManager — `?plugin=`
+# precisa ter o MESMO host da página — ficou satisfeita de graça, sem
+# `location ^~` nem alias. Nenhum plugin é carregado no deploy atual.
 #
 # A ORDEM IMPORTA, e é frágil: os mounts são casados na ordem de registro, e o
-# mount em "/" é casado antes de qualquer rota registrada DEPOIS dele. `/painel`
-# vem primeiro por isso, e este bloco é o ÚLTIMO do arquivo de propósito.
+# mount em "/" é casado antes de qualquer rota registrada DEPOIS dele: este
+# bloco é o ÚLTIMO do arquivo de propósito.
 #
 # Medido no container, para não escrever lenda: mover uma rota da API para baixo
 # daqui não a deixa "respondendo index.html no lugar de 404" — GET em caminho
@@ -1163,14 +1290,13 @@ async def mcp_get() -> dict[str, Any]:
 
 STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", "/app/static"))
 DIST_DIR = STATIC_ROOT / "dist"
-PAINEL_DIR = STATIC_ROOT / "painel"
 
 IMUTAVEIS = re.compile(r"\.(?:wasm|js|css)$")
 
 
 @app.middleware("http")
 async def cache_estatico(request: Request, call_next):
-    """Cache dos assets imutáveis e `no-store` no painel: o que o nginx fazia.
+    """Cache dos assets imutáveis: o que o nginx fazia.
 
     Defensivo de propósito. Este middleware abraça TODA requisição, inclusive
     as da API e do MCP: se ele levantar exceção, derruba o núcleo inteiro. Por
@@ -1179,10 +1305,7 @@ async def cache_estatico(request: Request, call_next):
     response = await call_next(request)
 
     try:
-        caminho = request.url.path
-        if caminho.startswith("/painel"):
-            response.headers["Cache-Control"] = "no-store"
-        elif IMUTAVEIS.search(caminho):
+        if IMUTAVEIS.search(request.url.path):
             response.headers["Cache-Control"] = "public, max-age=604800"
     except Exception:
         pass
@@ -1195,10 +1318,6 @@ if not DIST_DIR.is_dir():
     # o pior modo de falha para diagnosticar. Melhor avisar alto e cedo.
     print("[core] AVISO: %s não existe — o app não será servido" % DIST_DIR, flush=True)
 else:
-    if PAINEL_DIR.is_dir():
-        app.mount("/painel", StaticFiles(directory=PAINEL_DIR), name="painel")
-    else:
-        print("[core] AVISO: %s não existe — o painel não será servido" % PAINEL_DIR, flush=True)
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="app")
 
 

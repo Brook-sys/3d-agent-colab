@@ -191,7 +191,9 @@ Este repositório é um **protótipo**. A lista abaixo é de fragilidades medida
 
 ### Operação
 
-- **Build verde ≠ deploy funcionando.** O plugin entra por `COPY` e roda no navegador; só o console do kiosk testemunha um erro de referência.
+- **Build verde ≠ deploy funcionando.** O `/relay/` e o chat rodam no navegador; só o console do kiosk e o log do companheiro testemunham.
+- **O `/relay/` não tem autenticação própria.** Quem alcança a 8080 alcança o caminho — mas ainda precisa de chave válida do relay para queimar cota. Rate limit do relay passa a contar acertos por IP do container, não por máquina.
+- **O proxy lê o corpo inteiro do pedido** e tem timeout de 600 s **por leitura**. Conversa grande vira buffer; modelo que silencia mais de dez minutos no meio do stream tem a conexão cortada.
 - **Nada de orquestração.** Um `docker compose down` bem-sucedido é só isso: não há hook de drenagem, e o kiosk perde o que não foi publicado.
 - **`exec` e logs têm arestas:** prefixo binário de 8 bytes, `/proc/1/fd/1` trava, endpoint `/containers/<id>/wait` estoura em *read timeout* de 120 s.
 

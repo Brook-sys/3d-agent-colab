@@ -22,12 +22,19 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       FONTE_URL: ${FONTE_URL:-}
+      # Endereço do relay de IA que o assistente nativo do Chili3D usa. Sem
+      # default que resolva: é dado do ambiente do usuário (endereço de rede
+      # real não vai para arquivo versionado). Com ele definido, o assistente
+      # aponta para http://SEU-HOST:8080/relay — SEM /v1, porque o /v1 já
+      # está aqui: o proxy monta RELAY_URL/<caminho>, e um baseURL com /v1
+      # pediria /v1/v1/... no relay. A chamada sai pela MESMA origem da
+      # página — sem CORS no meio. A chave continua sendo colada no painel
+      # do assistente e vem no header de cada pedido; o núcleo não a guarda.
+      RELAY_URL: ${RELAY_URL:-}
     volumes:
       - /opt/3d-agent-colab/parts:/parts
-    # 9001 publicada duas vezes: 8080 é o endereço do app no navegador, e o
-    # painel dentro do app chama o núcleo em http://<host>:9001 (fallback de
-    # extension.js) quando a URL não traz api=. Não é redundância, é o que
-    # faz o painel funcionar nos dois acessos.
+    # 9001 publicada duas vezes: 8080 é o endereço do app no navegador. A API
+    # (REST e MCP) fica em 9001, que é o que o opencode.json do projeto usa.
     ports:
       - "8080:9001"
       - "9001:9001"
@@ -44,7 +51,10 @@ services:
       BRIDGE_PORT: ${BRIDGE_PORT:-17373}
       BRIDGE_HTTP_PORT: ${BRIDGE_HTTP_PORT:-17400}
       BRIDGE_DATA_DIR: ${BRIDGE_DATA_DIR:-/data}
-      KIOSK_URL: ${KIOSK_URL:-http://core:9001/?bridge=&plugin=http://core:9001/painel/&part=espacador&painel=1}
+      # Só o `?bridge=`: a página conecta de volta na ponte deste container, e
+      # é por ela que o agente externo dirige o documento. Nenhum plugin é
+      # carregado — o deploy é o Chili3D como vem do commit fixado.
+      KIOSK_URL: ${KIOSK_URL:-http://core:9001/?bridge=}
       FONTE_URL: ${FONTE_URL:-}
     volumes:
       - /opt/3d-agent-colab/session:/data

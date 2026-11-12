@@ -1,6 +1,6 @@
 # AGENTS.md — protocolo para agentes de IA neste repositório
 
-Este arquivo é para qualquer agente (humano ou IA) que vá trabalhar no **3D Agent Colab**. Ele existe porque o projeto tem meia dúzia de armadilhas que não aparecem no código e já custaram tempo: um plugin que some em silêncio, uma stack que não se recria, um endereço que não pode ir para o git.
+Este arquivo é para qualquer agente (humano ou IA) que vá trabalhar no **3D Agent Colab**. Ele existe porque o projeto tem meia dúzia de armadilhas que não aparecem no código e já custaram tempo: um proxy de IA que responde 503, um chat que não abre sem documento, uma stack que não se recria, um endereço que não pode ir para o git.
 
 Leia o [README](README.md) antes. Este arquivo trata do que **não** fazer e do que **conferir**.
 

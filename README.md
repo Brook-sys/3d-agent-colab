@@ -181,7 +181,7 @@ O console do kiosk **não** está no `docker logs`: o `start.sh` redireciona o C
 
 Este repositório é um **protótipo**. As fragilidades são reais, não teóricas, e a lista completa está em [docs/operacao.md](docs/operacao.md#limitações-conhecidas). As três que mais importam:
 
-- **Sem autenticação em lugar nenhum.** `REST`, `MCP` e o relay da ponte são abertos; 8080 e 9001 são públicos. Quem alcança o host publica versões, escreve na fila de conversa e dirige o kiosk.
+- **Sem autenticação em lugar nenhum.** `REST`, `MCP` e o relay da ponte são abertos; 8080 e 9001 são públicos. Quem alcança o host publica versões, escreve na fila de conversa e dirige o kiosk. O `/relay/` entra na mesma conta: qualquer um que alcance a porta 8080 pode queimar cota do relay — mas precisa da chave, e ela não está no servidor.
 - **O estado do documento vive na RAM do kiosk.** Reiniciar a sessão perde a geometria não publicada — o registro é a única memória durável.
 - **A validação FDM é métrica, não veredicto de manufaturabilidade.** O portal mede envelope, volume, topologia e massa. Parede mínima, furo, overhang e ponte estão **declarados** no `PROCESSO` do código, mas **não** são medidos na geometria — o `validacao.json` carrega um campo `limitacoes` dizendo isso.
 
