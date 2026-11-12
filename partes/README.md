@@ -5,7 +5,7 @@ escreve aqui; o `git` do diretório versiona cada publicação.
 
 ```
 partes/
-├── _estado/             fila de mensagens, estado do painel, cache da ponte
+├── _estado/             fila de mensagens, estado da ponte, cache
 ├── README.md            este arquivo (é copiado para o volume na semeadura)
 └── <slug>/
     ├── spec.json        intenção, material, parâmetros com procedência

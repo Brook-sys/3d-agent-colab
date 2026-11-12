@@ -11,10 +11,10 @@
 #   session/<arquivo> → session/start.sh copia para /app
 #
 # O que NÃO entra, e por quê:
-#   O app Chili3D e o painel (estáticos) são compilados/copiados DURANTE o build
-#   da imagem — o core/Dockerfile busca o dist do commit fixado em chili3d.ref e
-#   copia painel/. Não existe mais canal HTTP para atualizá-los: mudar o
-#   painel exige imagem nova (commit + workflow, ou ./deploy/build-local.sh).
+#   O app Chili3D (árvore estática) entra DURANTE o build da imagem — o
+#   core/Dockerfile busca o dist do commit fixado em chili3d.ref. Não existe
+#   canal HTTP para atualizá-lo: mudar exige imagem nova (commit + workflow,
+#   ou ./deploy/build-local.sh).
 #   Havia pacotes do app e do nginx que nenhum entrypoint consumia — saíram.
 #   consumia — saíram. Também havia um web/ de nginx, que não existe mais.
 set -eu

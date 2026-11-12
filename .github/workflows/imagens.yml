@@ -3,13 +3,17 @@ name: imagens
 # Constrói e publica as duas imagens no GHCR. É o caminho oficial: o
 # docker-compose.yml aponta para ghcr.io e o Portainer só faz o pull.
 #
-#   core    Python 3.12 + build123d + API/MCP + o app Chili3D e o painel (estático)
+#   core    Python 3.12 + build123d + API/MCP + o app Chili3D (estático)
 #   session Playwright/Chromium headless + ponte WebSocket
 #
 # Era três imagens: havia uma de nginx só para servir os arquivos estáticos. Ela
-# saiu — o núcleo passou a servir o app e o painel (ver o bloco "estático" no
-# fim de core/main.py), o que também satisfaz de graça a regra do PluginManager,
-# que exige que `?plugin=` tenha o mesmo host da página.
+# saiu — o núcleo passou a servir o app (ver o bloco "estático" no fim de
+# core/main.py), o que também satisfaz de graça a regra do PluginManager, que
+# exige que `?plugin=` tenha o mesmo host da página.
+#
+# O plugin que o núcleo servia em /painel saiu do deploy: o assistente de IA
+# nativo do Chili3D assumiu o lugar, e o proxy /relay do núcleo é o que o faz
+# alcançar o relay local sem CORS no caminho.
 #
 # Gatilho: push na main que mexa em algo que entre nas imagens, ou disparo
 # manual. Nada aqui é destrutivo — se o build quebrar, a imagem anterior
@@ -21,7 +25,6 @@ on:
     paths:
       - "core/**"
       - "session/**"
-      - "painel/**"
       - "partes/**"
       - "teste/**"
       - "chili3d.ref"
@@ -57,29 +60,21 @@ jobs:
       matrix:
         include:
           - nome: core
-            titulo: núcleo (API + MCP + app e painel)
+            titulo: núcleo (API + MCP + app)
           - nome: session
             titulo: sessão (ponte + kiosk)
     steps:
       - name: checkout
         uses: actions/checkout@v4
 
-      # O painel é JavaScript puro sem build: ele entra na imagem por COPY e
-      # roda no navegador do kiosk. Um erro de sintaxe ou de referência não
-      # quebra o build do Docker — quebra o plugin em silêncio (a página abre,
-      # o painel não aparece, e o console é a única testemunha). Foi assim que
-      # `constbotaoIa` passou uma revisão inteira: `node --check` aceita, porque
-      # aquilo é um identificador válido; o `appendChild(constbotaoIa)` é que
-      # morreria, dentro do `buildPanel()`, depois do `COPY`.
-      #
-      # `node --check` pega sintaxe, e é barato. Referência solta ele NÃO pega
-      # — para isso existe a verificação pós-deploy (o log `[painel] painel
-      # ativo` no chrome.log do kiosk). O que este passo garante é que o CI
-      # fica vermelho no erro grosseiro, antes de a imagem ser publicada.
-      - name: sintaxe do painel e do manifest
+      # A ponte e o companheiro CDP são JavaScript que roda no container: um
+      # erro de sintaxe aí não quebra o build do Docker — quebra a sessão em
+      # silêncio (a stack sobe, o kiosk não conecta). `node --check` é barato e
+      # pega o erro grosseiro antes de a imagem ser publicada. Referência solta
+      # ele NÃO pega — para isso existe a suíte abaixo e a verificação
+      # pós-deploy.
+      - name: sintaxe da sessão
         run: |
-          node --check painel/src/extension.js
-          node -e "JSON.parse(require('fs').readFileSync('painel/manifest.json','utf8')); console.log('manifest ok')"
           node --check session/bridge-server.mjs
           node --check session/kiosk-cdp.mjs
 

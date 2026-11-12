@@ -8,19 +8,16 @@ set -u
 LOG="[session]"
 DATA_DIR="${BRIDGE_DATA_DIR:-/data}"
 FONTE_URL="${FONTE_URL:-}"
-# O kiosk abre o app servido pelo PRÓPRIO núcleo: antes havia um nginx em
-# outro container (`http://web/`), e o PluginManager exigia que `?plugin=` e a
-# página estivessem no mesmo host para aceitar o plugin. Servindo os dois pelo
-# core, a regra fica satisfeita de graça.
+# O kiosk abre o app servido pelo PRÓPRIO núcleo. O `?bridge=` é o que faz a
+# página conectar de volta na ponte deste container — é por ele que o agente
+# externo dirige o documento. Ele diz respeito à ponte, NÃO ao assistente de IA
+# do app: o `chili-ai-chat` existe em qualquer página (import estático no
+# `editor.ts` do @chili3d/ui), com ou sem parâmetro na URL.
 #
-# `api=` foi REMOVIDO de propósito. Sem ele o painel cai no fallback
-# `http://${location.hostname}:9001` (extension.js:16), que acerta os alvos:
-# no kiosk, hostname = core → http://core:9001; no navegador do usuário,
-# hostname = máquina do Docker → http://<máquina>:9001. Com `api=` fixo em
-# http://core:9001 o kiosk funcionaria e o navegador do usuário quebraria —
-# `core` não resolve fora da rede do compose. É por isso que o core publica
-# 9001 no host também, e não só 8080.
-KIOSK_URL="${KIOSK_URL:-http://core:9001/?bridge=&plugin=http://core:9001/painel/&part=espacador&painel=1}"
+# Nenhum plugin é carregado: o deploy é o Chili3D tal como vem do commit
+# fixado. A regra do PluginManager — `?plugin=` no mesmo host da página —
+# continua satisfeita por servir o app pelo núcleo, para quem carregar o seu.
+KIOSK_URL="${KIOSK_URL:-http://core:9001/?bridge=}"
 mkdir -p "$DATA_DIR"
 
 # ------------------------------------------------- 1. atualizar da fonte

@@ -1,11 +1,11 @@
-# Núcleo do 3D Agent Colab — e agora também servidor do app: API + MCP + registro de
-# peças + validação FDM + estático (Chili3D e painel).
+# Núcleo do 3D Agent Colab — servidor do app: API + MCP + registro de peças +
+# validação FDM + estático (Chili3D).
 #
 # ANTES disto eram duas imagens: esta e uma de nginx que servia os arquivos.
-# O nginx saiu porque o app e o painel passaram a ser servidos por este mesmo
-# processo (ver o bloco "estático" no fim de core/main.py) — o que também
-# resolve de graça a regra do PluginManager, que exige que `?plugin=` tenha o
-# mesmo host da página.
+# O nginx saiu porque o app passou a ser servido por este mesmo processo
+# (ver o bloco "estático" no fim de core/main.py) — o que também resolve de
+# graça a regra do PluginManager, que exige que `?plugin=` tenha o mesmo host
+# da página.
 #
 # Duas coisas entram por apt e não podem faltar:
 #
@@ -84,7 +84,6 @@ RUN python -m venv /venv \
 COPY --chown=1000:1000 core/ /app/
 COPY --chown=1000:1000 partes/ /seed/partes/
 COPY --chown=1000:1000 --from=builder /src/dist /app/static/dist
-COPY --chown=1000:1000 painel/ /app/static/painel/
 
 # 1. sintaxe: `compileall` falha (e o build junto) em erro de sintaxe, o que a
 #    máquina de desenvolvimento não pega — ela não tem python. Sem este passo,

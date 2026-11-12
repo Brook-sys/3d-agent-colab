@@ -34,13 +34,16 @@ globalThis.fetch = async (url, opts = {}) => {
         if (corpo.name !== "new_document") {
             return { status: 200, json: async () => ({ ok: false, content: JSON.stringify({ error: "ferramenta inexistente" }) }) };
         }
+        dom.ultimoArgs = corpo.args;
         return { status: 200, json: async () => ({ ok: cenario.newDocument.ok, content: JSON.stringify(cenario.newDocument.data) }) };
     }
     throw new Error("fetch inesperado: " + u);
 };
 
 // O avaliar recebe UMA expressão JavaScript — é o contrato que a seção usa.
-const dom = { appPronto: true, iaAberta: false, pubsubFalha: false, pubsubChamado: 0 };
+// ultimoArgs guarda os argumentos do último new_document: é assim que os
+// cenários conferem se a ?part= da URL virou nome do documento.
+const dom = { appPronto: true, iaAberta: false, pubsubFalha: false, pubsubChamado: 0, ultimoArgs: null };
 const avaliar = async (expr) => {
     if (expr.includes("document.querySelector('chili-ribbon')")) return dom.appPronto;
     if (expr.startsWith("Boolean(document.querySelector('chili-ai-chat'))")) return dom.iaAberta;
@@ -64,11 +67,17 @@ function zerar(c) {
     dom.iaAberta = false;
     dom.pubsubFalha = false;
     dom.pubsubChamado = 0;
+    dom.ultimoArgs = null;
 }
 `;
 
-const ALVO = "http://core:9001/?bridge=&plugin=http://core:9001/painel/&part=espacador&painel=1";
-const ALVO_SEM_PARTE = "http://core:9001/?bridge=&plugin=http://core:9001/painel/&painel=1";
+// A `?part=` NÃO abre peça do registro — nenhum parâmetro de URL abre. O único
+// que ainda a lê é o `parteDaUrl` do companheiro CDP, e só para dar NOME ao
+// documento que ele cria no boot (`new_document({ name: parte })`). A distinção
+// entre os dois alvos é exatamente essa, e por isso ela continua tendo teste:
+// com `?part=` a ferramenta recebe o nome; sem, recebe `{}`.
+const ALVO = "http://core:9001/?bridge=&part=espacador";
+const ALVO_SEM_PARTE = "http://core:9001/?bridge=";
 
 const CENARIOS = [
     {
@@ -76,8 +85,9 @@ const CENARIOS = [
         cenario: `{ ponte: "conectada", newDocument: { ok: true, data: { documentId: "doc-1", name: "espacador" } } }`,
         asserts: `
             criouDocumento: /documento do kiosk: criado "espacador" \\(doc-1\\)/.test(log()),
-            iaAbriu: /assistente de IA: pubsub · painel aberto/.test(log()),
+            iaAbriu: /assistente de IA: pubsub · chat aberto/.test(log()),
             pubsubUmaVez: dom.pubsubChamado === 1,
+            passouONomeDaUrl: dom.ultimoArgs && dom.ultimoArgs.name === "espacador",
         `,
     },
     {
@@ -87,7 +97,7 @@ const CENARIOS = [
         cenario: `{ ponte: "conectada", newDocument: { ok: false, data: { error: "a document is already open" } } }`,
         asserts: `
             recusouSemQuebrar: /já havia documento: a document is already open/.test(log()),
-            iaAbriu: /painel aberto/.test(log()),
+            iaAbriu: /chat aberto/.test(log()),
         `,
     },
     {
@@ -97,7 +107,7 @@ const CENARIOS = [
         cenario: `{ ponte: "fraca", newDocument: { ok: true, data: {} } }`,
         asserts: `
             avisouPonte: /página não reconectou na ponte/.test(log()),
-            iaAindaAbre: /painel aberto/.test(log()),
+            iaAindaAbre: /chat aberto/.test(log()),
             naoCriouDocumento: !/documento do kiosk: criado/.test(log()),
         `,
     },
@@ -118,7 +128,7 @@ const CENARIOS = [
         cenario: `{ ponte: "conectada", newDocument: { ok: true, data: { documentId: "d", name: "espacador" } } }`,
         antes: "dom.iaAberta = true;",
         asserts: `
-            naoFechouPorEngano: /assistente de IA: ja-aberto · painel aberto/.test(log()),
+            naoFechouPorEngano: /assistente de IA: ja-aberto · chat aberto/.test(log()),
             pubsubNaoChamado: dom.pubsubChamado === 0,
         `,
     },
@@ -127,7 +137,7 @@ const CENARIOS = [
         cenario: `{ ponte: "conectada", newDocument: { ok: true, data: { documentId: "d", name: "espacador" } } }`,
         antes: "dom.pubsubFalha = true;",
         asserts: `
-            diagnosticou: /assistente de IA: falhou: Error: PubSub morto · painel NAO apareceu/.test(log()),
+            diagnosticou: /assistente de IA: falhou: Error: PubSub morto · chat NAO apareceu/.test(log()),
             documentoAindaCriado: /criado "espacador"/.test(log()),
         `,
     },

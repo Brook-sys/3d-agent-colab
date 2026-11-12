@@ -80,9 +80,9 @@ curl -s -X POST http://SEU-HOST:9001/mcp -H 'content-type: application/json' \
 | `validar` | `slug`, `versao` (default: última) | roda o portal FDM numa versão |
 | `construir_python` | `slug`, `codigo`, `material` | caminho headless: script build123d que define `result`; arquiva com STEP/STL |
 | `mensagens` | — | lê a fila compartilhada (web + terminal) |
-| `enviar_mensagem` | `texto`, `parte` | escreve na fila (`autor: "agente"`); aparece no painel |
+| `enviar_mensagem` | `texto`, `parte` | escreve na fila (`autor: "agente"`); aparece no chat da IA |
 | `anotacoes` | `slug` | lista os comentários ancorados da peça |
-| `estado_plugin` | — | último estado reportado pelo painel de cada peça |
+| `estado_plugin` | — | último estado reportado por plugin, quando algum estiver carregado (nenhum no deploy atual) |
 
 Regras de comportamento do endpoint, que valem para qualquer cliente:
 
@@ -151,7 +151,7 @@ publicar(slug="cantoneira-40")
 
 validar(slug="cantoneira-40")                 # opcional: revalidar depois de um ajuste
 enviar_mensagem(texto="v0001 publicada: envelope 120×40×35, 2 furos de 5,5", parte="cantoneira-40")
-  → a mensagem aparece no painel do Chili3D
+  → a mensagem aparece no chat da IA do Chili3D
 ```
 
 A ordem importa: **sem `?bridge=` na página não há ponte, e sem ponte não há STEP**. Se `ponte_estado` disser `conectada: false`, provavelmente o kiosk perdeu a aba (veja [operação](operacao.md)).
@@ -170,7 +170,7 @@ A ordem importa: **sem `?bridge=` na página não há ponte, e sem ponte não h�
 | `/parts/{slug}/versoes/{n}/validar` | POST | validar uma versão |
 | `/parts/{slug}/anotacoes` | GET/POST | comentários ancorados |
 | `/mensagens` | GET/POST | fila compartilhada |
-| `/estado-plugin` | POST | o painel publica o estado por aqui |
+| `/estado-plugin` | POST | um plugin publica o estado por aqui (nenhum carregado) |
 | `/arquivos/{caminho}` | GET | servir arquivo do registro |
 
 ---

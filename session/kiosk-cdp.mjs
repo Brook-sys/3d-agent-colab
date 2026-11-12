@@ -16,7 +16,7 @@
  *
  * A terceira tarefa é preparar o kiosk no boot: garantir um documento aberto
  * (sem ele, `activeView` não existe e o sistema de comandos do app recusa em
- * silêncio — inclusive o botão nativo do assistente de IA) e abrir o painel do
+ * silêncio — inclusive o botão nativo do assistente de IA) e abrir o chat do
  * assistente. Ver `garantirDocumento`, que tem a medição que motiva as duas.
  *
  * Conecta no DevTools do próprio Chromium (--remote-debugging-port=9222) e
@@ -192,7 +192,7 @@ async function garantirDocumento(alvo) {
  * Por isso não existe mais tentativa de clique: ela só adicionaria um caminho
  * que parece funcionar e não funciona.
  *
- * `toggleChatPanel` alterna: se o painel já estiver aberto, publicar de novo o
+ * `toggleChatPanel` alterna: se o chat já estiver aberto, publicar de novo o
  * FECHARIA. Por isso a conferência de `chili-ai-chat` vem antes.
  */
 async function abrirAssistenteIa(avaliar) {
@@ -204,10 +204,10 @@ async function abrirAssistenteIa(avaliar) {
     const caminho = await avaliar(expressao);
 
     for (let tentativa = 0; tentativa < 8; tentativa++) {
-        if (await avaliar("Boolean(document.querySelector('chili-ai-chat'))")) return `${caminho} · painel aberto`;
+        if (await avaliar("Boolean(document.querySelector('chili-ai-chat'))")) return `${caminho} · chat aberto`;
         await new Promise((r) => setTimeout(r, 400));
     }
-    return `${caminho} · painel NAO apareceu`;
+    return `${caminho} · chat NAO apareceu`;
 }
 
 /**

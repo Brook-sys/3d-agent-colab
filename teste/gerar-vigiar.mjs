@@ -27,7 +27,7 @@ const LOG = [];
 const linha = (...a) => LOG.push(a.map((x) => String(x)).join(" "));
 const CAPTURAS = "/tmp/capturas-falso";
 const CDP_HTTP = "http://127.0.0.1:9222";
-const ALVO = "http://core:9001/?bridge=&plugin=http://core:9001/painel/&part=espacador&painel=1";
+const ALVO = "http://core:9001/?bridge=";
 
 const real = globalThis.setTimeout;
 // Tempos encolhidos por 100: a rede de segurança de 12 s vira 120 ms, a pausa

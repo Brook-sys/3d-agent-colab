@@ -18,7 +18,7 @@ Um pipeline verificável de modelo → versão → medição → validação, co
    │  você        │        │  core  (FastAPI + MCP)        │        │  session     │
    │  navegador   │───────▶│  · registro /parts            │◀──────▶│  · ponte WS  │
    │  Chili3D +   │  8080  │  · validação FDM (build123d)  │  :9001 │  · kiosk     │
-   │  painel + IA │◀───────│  · serve o app e o painel     │        │    Chromium  │
+   │  IA nativa   │◀───────│  · serve o app e /relay       │        │    Chromium  │
    └──────────────┘  9001  └───────────────┬───────────────┘        └──────────────┘
             ▲                             │  v000N/                    ▲
             │  mesma fila de conversa     ▼                            │ mesma ferramenta
@@ -69,11 +69,11 @@ networks:
   3d-agent-colab: { name: 3d-agent-colab }
 ```
 
-**3. Abra o app**: `http://SEU-HOST:8080/?plugin=http://SEU-HOST:8080/painel/&part=espacador&painel=1&bridge=`
+**3. Abra o app**: `http://SEU-HOST:8080/?bridge=`
 
-O `&bridge=` não é enfeite: é o que faz a página importar o pacote de IA. Sem ele o assistente **não existe** — nem ribbon, nem comando. No seu navegador não há ponte rodando, então a aba vai tentar `ws://127.0.0.1:17373` a cada 8 s e falhar: é ruído de console, não defeito. O kiosk já abre com esse parâmetro.
+O `&bridge=` é o que faz a página conectar de volta na ponte — e é por ela que o agente externo dirige o documento. Ele **não** tem relação com o assistente de IA: o chat do Chili3D existe em qualquer página (import estático no `editor.ts` do app). No seu navegador não há ponte rodando, então a aba vai tentar `ws://127.0.0.1:17373` a cada 8 s e falhar: é ruído de console, não defeito.
 
-**4. Ligue a IA embutida**: crie um documento primeiro (**New** na tela inicial — sem documento aberto o app recusa o comando em silêncio), clique em **Manager ▸ Other ▸ AI Assistant**, cole a chave na engrenagem e escolha o provedor. No kiosk o documento é criado no boot e a IA já abre sozinha. Veja [uso com IA no Chili3D](docs/uso-chili3d-ia.md).
+**4. Ligue a IA embutida**: crie um documento primeiro (**New** na tela inicial — sem documento aberto o app recusa o comando em silêncio), clique em **Manager ▸ Other ▸ AI Assistant**, cole a chave na engrenagem e escolha o provedor. Se o provedor é o relay da casa (sem CORS), aponte para `http://SEU-HOST:8080/relay` — ver `RELAY_URL` abaixo. No kiosk o documento é criado no boot e a IA já abre sozinha. Veja [uso com IA no Chili3D](docs/uso-chili3d-ia.md).
 
 **5. Aponte o agente** para `http://SEU-HOST:9001/mcp`. Veja [uso pelo OpenCode](docs/uso-opencode.md).
 
@@ -87,11 +87,11 @@ O `&bridge=` não é enfeite: é o que faz a página importar o pacote de IA. Se
 | melhor para | modelar, ajustar variáveis, explorar | publicar versões, validar, registrar, conversar com você |
 | persiste | conversa no documento (IndexedDB) | registro `/parts` + git |
 
-Os dois **cooperam**: a fila de mensagens é a mesma (`GET/POST /mensagens` no núcleo), então você pode pedir no painel e deixar o agente executar, ou o contrário. Guia completo em [docs/uso-chili3d-ia.md](docs/uso-chili3d-ia.md) e [docs/uso-opencode.md](docs/uso-opencode.md).
+Os dois **cooperam**: a fila de mensagens é a mesma (`GET/POST /mensagens` no núcleo), então você pode pedir no assistente e deixar o agente executar, ou o contrário. Guia completo em [docs/uso-chili3d-ia.md](docs/uso-chili3d-ia.md) e [docs/uso-opencode.md](docs/uso-opencode.md).
 
 ## Arquitetura
 
-Dois containers, um processo cada, e uma escolha que define o resto: **o núcleo também serve o app e o painel**. Antes havia um terceiro container de nginx só para os arquivos estáticos; ele saiu porque o `PluginManager` do Chili3D exige que `?plugin=` tenha o **mesmo host** da página, e servir os dois pelo mesmo processo satisfaz a regra por construção — sem `location ^~` e sem alias de nginx. O preço está anotado em [docs/arquitetura.md](docs/arquitetura.md): uvicorn não é nginx.
+Dois containers, um processo cada, e duas escolhas que definem o resto: **o núcleo também serve o app** (antes havia um terceiro container de nginx só para os arquivos estáticos) e **faz o proxy do relay de IA** (`/relay/`). A primeira existe porque o `PluginManager` do Chili3D exige que `?plugin=` tenha o **mesmo host** da página. A segunda porque o assistente nativo chama o provedor direto do navegador, e um relay local sem CORS morre no preflight — servindo o relay pela mesma origem da página, não há preflight nenhum. O preço de cada uma está anotado em [docs/arquitetura.md](docs/arquitetura.md).
 
 ```
 core (ghcr.io/brook-sys/3d-agent-colab-core:main)
@@ -113,14 +113,12 @@ Detalhes, protocolo, trade-offs e os modos de falha medidos: [docs/arquitetura.m
 | [docs/uso-opencode.md](docs/uso-opencode.md) | configurar o MCP, as 13 ferramentas, um turno completo de trabalho |
 | [docs/uso-chili3d-ia.md](docs/uso-chili3d-ia.md) | ligar e configurar a IA embutida, os 3 provedores, o que ela pode fazer, como ela aprende o projeto |
 | [docs/operacao.md](docs/operacao.md) | deploy, redeploy, backup, logs e a tabela de sintoma → causa → ação |
-| [docs/painel.md](docs/painel.md) | como o painel funciona e como estendê-lo |
 
 ## Estrutura do repositório
 
 ```
-core/            FastAPI + MCP + registro + build123d + servidor do app/painel
+core/            FastAPI + MCP + registro + build123d + servidor do app + proxy /relay
 session/         ponte WebSocket + kiosk Chromium + companheiro CDP
-painel/          plugin do Chili3D (JS puro, sem build): variáveis, comentários, chat, guia da IA
 partes/          semente do registro (espacador, suporte-l) — copiada no primeiro boot
 deploy/          ciclo curto de desenvolvimento (build local + compose local)
 docs/            documentação (este índice)
@@ -143,10 +141,11 @@ Todas as variáveis têm default e o campo **Env** da stack no Portainer sobresc
 | `BRIDGE_PORT` | session | `17373` | porta WebSocket da ponte |
 | `BRIDGE_HTTP_PORT` | session | `17400` | porta HTTP da ponte |
 | `BRIDGE_DATA_DIR` | session | `/data` | capturas, perfil do Chromium, pedidos |
-| `KIOSK_URL` | session | `http://core:9001/?bridge=&plugin=http://core:9001/painel/&part=espacador&painel=1` | página que o kiosk abre |
+| `KIOSK_URL` | session | `http://core:9001/?bridge=` | página que o kiosk abre |
+| `RELAY_URL` | core | vazio | endereço do relay de IA (ex.: `http://SEU-HOST:20128/v1`). Sem ele o `/relay/` responde 503 — de propósito |
 | `FONTE_URL` | ambos | vazio | canal legado de atualização por HTTP |
 
-Nenhuma é segredo. O que **não** deve ir para arquivo versionado é endereço da sua máquina — `FONTE_URL` existe para isso e fica vazio por padrão.
+Nenhuma é segredo — e a chave do relay também **não** entra aqui: ela é colada na engrenagem do assistente, no navegador, e o núcleo só a repassa. O que **não** deve ir para arquivo versionado é endereço da sua máquina — `FONTE_URL` e `RELAY_URL` existem para isso e ficam vazios por padrão.
 
 ## Dados
 
@@ -189,7 +188,7 @@ Este repositório é um **protótipo**. As fragilidades são reais, não teóric
 
 O app servido pela imagem `core` é o **Chili3D**, **AGPL-3.0** (`xiangechen/chili3d`, commit fixado em [`chili3d.ref`](chili3d.ref)); ele é compilado do fonte a cada build.
 
-O código **deste** repositório (`core/`, `session/`, `painel/`) não tem licença declarada — escolha em aberto, não esquecimento: sem `LICENSE`, o padrão legal é "todos os direitos reservados".
+O código **deste** repositório (`core/`, `session/`) não tem licença declarada — escolha em aberto, não esquecimento: sem `LICENSE`, o padrão legal é "todos os direitos reservados".
 
 ## Contribuindo
 

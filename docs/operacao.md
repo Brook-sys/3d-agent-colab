@@ -23,8 +23,8 @@ O que acontece no primeiro boot:
 
 1. o núcleo semeia `/parts` com as peças de exemplo — mas **só se o marcador `/parts/.semeadura` não existir**, e não "se o diretório estiver vazio". Um `/parts` restaurado de backup antigo, sem o marcador, recebe a semente por cima (`cp -a` sobrescreve os `spec.json` dos slugs coincidentes). Depois de um restore, confira o marcador;
 2. a sessão sobe o Chromium em kiosk e o companheiro CDP;
-3. o kiosk abre `KIOSK_URL` (`http://core:9001/?bridge=&plugin=…&part=espacador&painel=1`);
-4. a página importa a IA (porque a URL tem `?bridge=`); o companheiro CDP **cria um documento** com a ferramenta `new_document` e só então abre o assistente — sem documento aberto, `activeView` não existe e o app recusa os comandos em silêncio (veja [uso com IA](uso-chili3d-ia.md#2-abrir-o-assistente));
+3. o kiosk abre `KIOSK_URL` (`http://core:9001/?bridge=`);
+4. o companheiro CDP **cria um documento** com a ferramenta `new_document` e só então confere o assistente — sem documento aberto, `activeView` não existe e o app recusa os comandos em silêncio (veja [uso com IA](uso-chili3d-ia.md#2-abrir-o-assistente));
 5. a ponte recebe o `hello` com as 30 ferramentas e grava `page-tools.json`.
 
 O `pull_policy: always` garante que um `up -d` puxe a imagem nova; no Portainer use **Update the stack → Repull image and redeploy**, que é o equivalente.
@@ -33,7 +33,8 @@ O `pull_policy: always` garante que um `up -d` puxe a imagem nova; no Portainer 
 
 | variável | default | quando mexer |
 |---|---|---|
-| `KIOSK_URL` | `…&part=espacador&painel=1` | para abrir outra peça no kiosk |
+| `KIOSK_URL` | `http://core:9001/?bridge=` | quase nunca — e nenhum parâmetro abre peça: o app só lê `?url=`/`?model=` |
+| `RELAY_URL` | vazio | **obrigatório para a IA do app** quando o provedor é o relay da casa. Sem ele, `/relay/` responde 503 |
 | `PARTS_ROOT` | `/parts` | quase nunca; se mexer, mexa o bind junto |
 | `PRINTER_MODEL` | `Elegoo Neptune 4` | muda `IMPRESSORA.modelo` e o volume **não** — o envelope segue 220×220×250 até você editar o código |
 | `PUID`/`PGID` | `1000` | se o uid 1000 já existir no host com outro significado |
@@ -42,32 +43,35 @@ O `pull_policy: always` garante que um `up -d` puxe a imagem nova; no Portainer 
 
 ## Verificação pós-deploy
 
-Cinco checagens, na ordem, cada uma pegando uma classe de falha diferente:
+Seis checagens, na ordem, cada uma pegando uma classe de falha diferente:
 
 ```sh
 # 1. o núcleo está de pé e a ponte conectada?
 curl -s http://SEU-HOST:9001/health
 #    {"ok":true,"ponte":{"conectada":true,"ferramentas":30}}
 
-# 2. o app serve?
+# 2. o app serve? (o dist entrou na imagem?)
 curl -s -o /dev/null -w '%{http_code}\n' http://SEU-HOST:8080/
-curl -s -o /dev/null -w '%{http_code}\n' http://SEU-HOST:8080/painel/manifest.json
 
 # 3. o MCP responde com as 13 ferramentas?
 curl -s -X POST http://SEU-HOST:9001/mcp -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -o '"name":"[a-z_]*"' | wc -l
 
-# 4. o painel carregou de fato? (a checagem que o CI NÃO faz)
-#    NÃO está no docker logs: o start.sh redireciona o Chromium para chrome.log
-grep -a "painel ativo" /opt/3d-agent-colab/session/chrome.log | tail -3
+# 4. o proxy do relay está de pé? (a checagem que o CI NÃO faz)
+#    com RELAY_URL definido e uma chave válida: 200. Sem chave: 401. Sem RELAY_URL: 503.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://SEU-HOST:8080/relay/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"SEU-MODELO","messages":[{"role":"user","content":"oi"}],"max_tokens":8}'
+#    a chave vai no header Authorization de quem chama — o núcleo só repassa:
+#    curl … -H "Authorization: Bearer <cola-aqui>" …
 
 # 5. o kiosk tem documento e a IA está na tela?
 grep -a "documento do kiosk\|assistente de IA" /opt/3d-agent-colab/session/kiosk-cdp.log | tail -4
-#    documento do kiosk: criado "espacador" …  ·  assistente de IA: ja-aberto · painel aberto
-#    ("ja-aberto" é o normal: o painel de IA começa aberto no boot do app)
+#    documento do kiosk: criado "<parte>" …  ·  assistente de IA: ja-aberto · chat aberto
+#    ("ja-aberto" é o normal: o chat começa aberto no boot do app)
 ```
 
-A checagem 4 é a que importa: para o plugin, build verde **não** significa painel funcionando. Um erro de referência dentro do `buildPanel()` não derruba a página — só o console.
+A checagem 4 é a que importa: o `/relay/` encaminha para fora do container, e o build verde **não** significa que ele chegou lá. Um `RELAY_URL` errado devolve 502 e um relay apagado também — o proxy separa os dois na hora, porque o 502 traz o motivo. O assistente ainda apontando direto para o relay, sem o `/relay/`, tem outro sintoma: `Failed to fetch`, que só o console do navegador distingue.
 
 Para trocar de peça no kiosk (não existe ferramenta de fechar documento):
 
@@ -110,14 +114,14 @@ docker compose up -d                        # /parts vazio → semeado de novo
 
 | o que | arquivo (no container) | no host |
 |---|---|---|
-| console da página, plugin, renderer | `/data/chrome.log` | `/opt/3d-agent-colab/session/chrome.log` |
+| console da página e do renderer | `/data/chrome.log` | `/opt/3d-agent-colab/session/chrome.log` |
 | companheiro CDP (diálogos, download, recarga, documento do boot, IA) | `/data/kiosk-cdp.log` | `/opt/3d-agent-colab/session/kiosk-cdp.log` |
 | núcleo (REST, MCP, publicação) | stdout do container | `docker logs 3d-agent-colab-core` |
 | ponte WebSocket | stdout do container | `docker logs 3d-agent-colab-session` |
 
 ```sh
-# o console da página: onde o `[painel] painel ativo` realmente mora
-grep -a "painel ativo" /opt/3d-agent-colab/session/chrome.log | tail -5
+# o console da página (cresce sem limite — veja abaixo)
+tail -30 /opt/3d-agent-colab/session/chrome.log
 
 # diálogos fechados, downloads, recargas e o assistente de IA
 tail -30 /opt/3d-agent-colab/session/kiosk-cdp.log
@@ -133,7 +137,8 @@ Onde procurar o quê:
 
 | sintoma | onde | o que grep |
 |---|---|---|
-| painel não aparece | `chrome.log` | `painel ativo`, `Plugin 3D Agent` |
+| chat da IA não abre | `kiosk-cdp.log` | `assistente de IA` |
+| relay inacessível | stdout do core | `relay inalcançável`, `RELAY_URL` |
 | ponte não conecta | logs da sessão (stdout) | `bridge` |
 | IA não abre no kiosk | `kiosk-cdp.log` | `assistente de IA` |
 | documento do kiosk | `kiosk-cdp.log` | `documento do kiosk` |
@@ -153,11 +158,14 @@ Onde procurar o quê:
 |---|---|---|
 | `/health` não responde | core caindo na subida | `docker logs 3d-agent-colab-core`; a causa clássica é rota com `dict \| Response` sem `response_model=None` (o import morre) |
 | `ponte.conectada: false` | kiosk perdeu a aba, ou a URL não tem `?bridge=` | conferir `KIOSK_URL`; `POST /kiosk/recarregar`; logs da sessão |
-| painel não aparece | erro de referência no `extension.js`, ou `?painel=0` | remover `painel=0` da URL; `grep -a "painel ativo" chrome.log` — **sem a linha, o plugin não rodou** |
-| ribbon sem "AI Assistant" | URL sem `?bridge=` (o módulo de IA não é importado) | adicionar `&bridge=` na URL e recarregar |
+| assistente acusa `Failed to fetch` | CORS: o relay local não responde preflight (medido: 401 sem `Access-Control-Allow-*`) | apontar o `baseURL` da engrenagem para `http://SEU-HOST:8080/relay` (sem `/v1` — ele já está no `RELAY_URL`), com `RELAY_URL` definido no core |
+| `/relay/` devolve 503 | `RELAY_URL` não está no ambiente do core | defini-lo no campo Env da stack e fazer *Repull image and redeploy* |
+| `/relay/` devolve 502 | `RELAY_URL` aponta para hospedeiro errado, ou o relay está apagado | conferir o endereço **de dentro da rede do compose**; o erro traz o motivo |
+| `/relay/` devolve 401 | a chave chegou errada, ou o relay a rejeitou | colar de novo na engrenagem; o 401 é do relay e chega **tal qual** — não é o proxy inventando |
+| ribbon sem "AI Assistant" | não há documento aberto — **não** tem a ver com `?bridge=` (medido: o chat existe em qualquer URL) | criar um documento; conferir `documento do kiosk` no `kiosk-cdp.log` |
 | chave da IA não cola / some | é o comportamento previsto: só memória da aba | colar de novo após F5; ver [uso com IA](uso-chili3d-ia.md) |
 | botão "AI Assistant" não faz nada | não há documento aberto: `CommandService.checking()` recusa o comando em silêncio | criar um documento (`doc.new`, que é comando de aplicação) e clicar de novo |
-| IA não abre no kiosk | o painel já estava aberto (`ja-aberto`, que é o normal), ou o PubSub falhou | `grep -a "assistente de IA" kiosk-cdp.log` → diz qual caminho e se o painel apareceu |
+| IA não abre no kiosk | o chat já estava aberto (`ja-aberto`, que é o normal), ou o PubSub falhou | `grep -a "assistente de IA" kiosk-cdp.log` → diz qual caminho e se o chat apareceu |
 | publicação sem STEP | kiosk recarregado (documento na RAM) ou download bloqueado | reconstruir o documento (`run_parametric`) e publicar de novo; `kiosk-cdp.log` → `download concluído` |
 | `validar` dá "bloqueado" sempre | versão sem `model.step` | olhar `v000N/manifest.json` → `sem_step: true` |
 | "outra aba assumiu a ponte" | duas abas com `?bridge=` | recarregar a aba que perdeu |
@@ -205,4 +213,4 @@ Autenticação, TLS, multi-usuário, controle de acesso por peça, medição de 
 
 ## Ver também
 
-- [arquitetura](arquitetura.md) · [uso com IA no Chili3D](uso-chili3d-ia.md) · [uso pelo OpenCode](uso-opencode.md) · [painel](painel.md) · [AGENTS.md](../AGENTS.md)
+- [arquitetura](arquitetura.md) · [uso com IA no Chili3D](uso-chili3d-ia.md) · [uso pelo OpenCode](uso-opencode.md) · [AGENTS.md](../AGENTS.md)
