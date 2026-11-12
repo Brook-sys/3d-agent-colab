@@ -123,6 +123,87 @@ checar("sem-relay-mensagem-explicativa", /RELAY_URL/.test(aviso.erro || "") && B
 checar("sem-relay-app-contina-servindo", (await fetch(BASE2 + "/")).status === 200, "");
 semRelay.parar();
 
+// ------------------------------------------------- corpo grande recusado
+// O limite é 1 MB por default; o servidor sobe com 4 KB aqui para o teste não
+// precisar gerar 1 MB. O que se mede é que o corpo é recusado ANTES de chegar ao
+// relay — não depois, e não com o relay tendo recebido tudo.
+const porta3 = await portaLivre();
+const comLimite = await subirServidor({
+    dist,
+    porta: porta3,
+    relayPorta: relay.porta,
+    env: { CORPO_MAX: String(4096) },
+});
+const BASE3 = `http://127.0.0.1:${porta3}`;
+await esperarBoot(BASE3);
+const antesDoGrande = relay.recebido.length;
+r = await fetch(BASE3 + "/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "x".repeat(20000),
+});
+// Texto, e não `.json()`: com a proteção fora, a resposta é SSE — e `.json()`
+// estouraria, matando o cenário calado em vez de acusar com nome.
+const textoRecusa = await r.text();
+let recusa = {};
+try {
+    recusa = JSON.parse(textoRecusa);
+} catch {
+    recusa = { erro: textoRecusa.slice(0, 100) };
+}
+const depoisDoGrande = relay.recebido.length;
+checar("corpo-grande-da-413", r.status === 413, `status ${r.status}`);
+checar("corpo-grande-explica", /limite|CORPO_MAX|bytes/.test(recusa.erro + " " + (recusa.como || "")), textoRecusa.slice(0, 120));
+checar("corpo-grande-nao-chega-ao-relay", antesDoGrande === depoisDoGrande, `recebidos a mais: ${depoisDoGrande - antesDoGrande}`);
+checar("corpo-grande-nao-mata-o-servidor", (await fetch(BASE3 + "/healthz")).status === 200, "");
+// E um pedido pequeno continua passando depois da recusa: a recusa não pode
+// deixar o servidor em estado travado.
+r = await fetch(BASE3 + "/v1/models");
+checar("depois-da-recusa-o-proxy-segue", r.status === 200, `status ${r.status}`);
+comLimite.parar();
+
+// ------------------------------------------- relay que nunca responde
+// 504 e não 502: a diferença é diagnóstico — 502 é "não falei com o relay",
+// 504 é "falei e ele não respondeu a tempo". Sem tempo de espera, um relay
+// travado deixaria o socket pendurado aqui para sempre.
+const porta4 = await portaLivre();
+const comTempo = await subirServidor({
+    dist,
+    porta: porta4,
+    relayPorta: relay.porta,
+    env: { RELAY_TIMEOUT: String(1500) },
+});
+const BASE4 = `http://127.0.0.1:${porta4}`;
+await esperarBoot(BASE4);
+const tTravado = Date.now();
+r = null;
+let tEsgotado = 0;
+try {
+    r = await fetch(BASE4 + "/v1/travado", {
+        method: "POST",
+        body: "{}",
+        // Sem tempo de espera no servidor, o pedido fica pendurado. Com o signal,
+        // o CLIENTE desiste — e o cenário ainda acusa com nome, em vez de morrer
+        // calado e fazer o runner classificar a mutação como "quebrou".
+        signal: AbortSignal.timeout(20000),
+    });
+    tEsgotado = Date.now() - tTravado;
+} catch (erro) {
+    checar("relay-travado-da-504", false, `o servidor nunca respondeu (${erro.name}) — socket pendurado`);
+    checar("relay-travado-desiste-no-tempo", false, "não desistiu: o pedido ficou pendurado");
+}
+if (r) {
+    const travado = await r.json();
+    checar("relay-travado-da-504", r.status === 504, `status ${r.status}`);
+    checar("relay-travado-explica", /relay/.test(travado.erro || ""), JSON.stringify(travado).slice(0, 120));
+    // Desiste em RELAY_TIMEOUT, não em "algum momento". A margem é folgada de
+    // propósito: o relógio do CI varia, e um teste de tempo apertado demais
+    // falha sozinho de vez em quando.
+    checar("relay-travado-desiste-no-tempo", tEsgotado < 12000, `desistiu em ${tEsgotado}ms`);
+    checar("relay-travado-nao-mata-o-servidor", (await fetch(BASE4 + "/healthz")).status === 200, "");
+}
+comTempo.parar();
+
 process.on("exit", () => {
     servidor.parar();
     relay.parar();

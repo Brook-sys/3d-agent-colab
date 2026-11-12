@@ -105,6 +105,10 @@ Este repositório é um **protótipo**. As fragilidades são reais, não teóric
   pela nossa origem, sem barreira de CORS no caminho. Queimar cota do relay não
   exige chave de ninguém — mas usar um **modelo** exige a chave, e ela não está
   no servidor.
+- **Sem limite de taxa.** Existem teto de corpo (1 MB) e tempo de espera do relay
+  (60 s), e ambos são recusas claras — mas nada impede uma enxurrada de pedidos
+  pequenos e legítimos. Quem alcança a porta 8080 dispara contra o relay à
+  vontade; a única trava é a chave, que só o usuário tem.
 - **O proxy não filtra caminhos.** `/v1/*` vai integralmente para o relay, o que
   for pedido. Num relay OpenAI-compatível isso é a API toda; se o relay tiver
   rota sensível sob `/v1/`, ela fica alcançável por quem alcança o container.

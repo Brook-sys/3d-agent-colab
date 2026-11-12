@@ -56,6 +56,25 @@ export const PORTA = Number(process.env.PORT || 8080);
 /** Origem devolvida nos cabeçalhos CORS que este servidor emite. */
 const CORS_ORIGEM = process.env.CORS_ORIGEM || "*";
 
+/**
+ * Quanto esperar o relay antes de desistir.
+ *
+ * Não é enfeite: sem isto, um relay que aceita a conexão e nunca responde deixa
+ * o socket pendurado aqui para sempre. O assistente tem o seu próprio tempo de
+ * espera, mas o socket do servidor ficaria aberto — e bastariam alguns pedidos
+ * desses para esgotar o que der e vier.
+ */
+const RELAY_TIMEOUT = Number(process.env.RELAY_TIMEOUT || 60000);
+
+/**
+ * Tamanho máximo do corpo encaminhado ao relay.
+ *
+ * O assistente manda conversa: alguns KB. Um corpo grande vindo de quem alcança
+ * a porta 8080 não é pedido legítimo, e encaminhá-lo seria emprestar o relay
+ * para um terceiro. 1 MB é ordem de grandeza acima de qualquer pedido real.
+ */
+const CORPO_MAX = Number(process.env.CORPO_MAX || 1024 * 1024);
+
 const TIPOS = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -221,6 +240,7 @@ function encaminhar(req, res, resto) {
             path: `/v1${resto}`,
             method: req.method,
             headers: cabecalhos,
+            timeout: RELAY_TIMEOUT,
         },
         (resposta) => {
             const volta = {};
@@ -234,16 +254,66 @@ function encaminhar(req, res, resto) {
         },
     );
 
+    // Tempo esgotado: 504, não 502. A diferença importa no diagnóstico — 502 diz
+    // "não falei com o relay", 504 diz "falei e ele não respondeu a tempo".
+    let esgotado = false;
+    pedido.on("timeout", () => {
+        esgotado = true;
+        // Quem registra no log é o handler de `error` abaixo: uma linha só, e já
+        // com o status que o cliente vai ver.
+        pedido.destroy(new Error("tempo esgotado"));
+    });
+
     pedido.on("error", (erro) => {
-        log(`relay inacessível (${RELAY}): ${erro.code || erro.message}`);
+        // A mensagem do log tem de distinguir os dois casos: "tempo esgotado" e
+        // "não falei" têm diagnósticos diferentes, e um log que diga "inacessível"
+        // para os dois manda procurar defeito no lugar errado.
+        log(
+            esgotado
+                ? `relay demorou mais de ${RELAY_TIMEOUT}ms (${RELAY}) — desistindo (504)`
+                : `relay inacessível (${RELAY}): ${erro.code || erro.message}`,
+        );
         if (!res.headersSent) {
-            erroJson(res, 502, "relay inacessível", `não foi possível falar com ${RELAY}`);
+            erroJson(
+                res,
+                esgotado ? 504 : 502,
+                esgotado ? "relay demorou demais" : "relay inacessível",
+                esgotado
+                    ? `o relay não respondeu em ${RELAY_TIMEOUT}ms (${RELAY})`
+                    : `não foi possível falar com ${RELAY}`,
+            );
         } else {
             res.destroy();
         }
     });
 
-    req.pipe(pedido);
+    // Corpo encaminhado bloco a bloco, e não por `pipe`, por uma razão: `pipe`
+    // não dá onde inserir a conta de bytes. Contar aqui é o que permite recusar
+    // um corpo grande antes de encaminhá-lo. O streaming continua sendo bloco a
+    // bloco — nada é bufferizado.
+    let recebido = 0;
+    let recusado = false;
+    req.on("data", (pedaco) => {
+        if (recusado) return;
+        recebido += pedaco.length;
+        if (recebido > CORPO_MAX) {
+            recusado = true;
+            log(`corpo de ${recebido} bytes recusado (limite ${CORPO_MAX})`);
+            erroJson(
+                res,
+                413,
+                "corpo grande demais",
+                `o pedido passou de ${CORPO_MAX} bytes e não foi encaminhado ao relay`,
+            );
+            pedido.destroy();
+            return;
+        }
+        pedido.write(pedaco);
+    });
+    req.on("end", () => {
+        if (!recusado) pedido.end();
+    });
+    req.on("aborted", () => pedido.destroy());
 }
 
 /**

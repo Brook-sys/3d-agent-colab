@@ -47,6 +47,8 @@ cenários previstos, nem mais nem menos.
 | resposta bufferizada | `primeiro-bloco-nao-bufferizado` | cada token do assistente só chegaria no fim |
 | sem CORS na resposta | `resposta-proxy-tem-acao` | apontar o assistente para outro host voltaria a ser barrado |
 | sem saneamento de caminho | `travessia-barrada-1..3` | `..%2f` lê arquivo fora do `dist` |
+| sem limite de corpo | `corpo-grande-da-413`, `corpo-grande-explica`, `corpo-grande-nao-chega-ao-relay` | quem alcança a porta 8080 usaria o relay como quiser, com corpo do tamanho que quisesse |
+| sem tempo de espera | `relay-travado-da-504`, `relay-travado-desiste-no-tempo` | relay que nunca responde deixa o socket pendurado aqui para sempre |
 
 Uma mutação que não se aplica ao fonte ("não pegou") é falha, não silêncio — uma
 mutação que não pega produziria um verde que não significa nada.

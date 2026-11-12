@@ -117,6 +117,30 @@ const mutacoes = [
         ],
         espera: ["travessia-barrada-1", "travessia-barrada-2", "travessia-barrada-3"],
     },
+    {
+        nome: "sem-limite-de-corpo",
+        porque:
+            "o proxy encaminha corpo de qualquer tamanho ao relay. Quem alcança a porta 8080 passa a usar o relay como quiser — e um corpo gigante é jeito simples de travar o processo.",
+        trocas: [["        if (recebido > CORPO_MAX) {", "        if (false) {"]],
+        espera: ["corpo-grande-da-413", "corpo-grande-explica", "corpo-grande-nao-chega-ao-relay"],
+    },
+    {
+        nome: "sem-tempo-de-espera",
+        porque:
+            "o relay que aceita a conexão e nunca responde deixa o socket pendurado aqui para sempre. O sintoma em produção é assistente pendurado e servidor vivo — e alguns desses esgotam o que der e vier.",
+        trocas: [
+            ["            timeout: RELAY_TIMEOUT,\n", ""],
+            [
+                '    pedido.on("timeout", () => {\n        esgotado = true;\n        // Quem registra no log é o handler de `error` abaixo: uma linha só, e já\n        // com o status que o cliente vai ver.\n        pedido.destroy(new Error("tempo esgotado"));\n    });\n',
+                "",
+            ],
+        ],
+        // `relay-travado-explica` e `relay-travado-nao-mata-o-servidor` não estão
+        // na lista, e não é esquecimento: ambos ficam dentro do `if (r)`, e sem
+        // resposta do servidor o cliente desiste antes. Exigir a queda deles
+        // seria exigir algo que o cenário não verifica nesse caminho.
+        espera: ["relay-travado-da-504", "relay-travado-desiste-no-tempo"],
+    },
 ];
 
 /** Aplica as trocas textuais de uma mutação e devolve o caminho da cópia. */

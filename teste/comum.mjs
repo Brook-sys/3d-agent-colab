@@ -142,6 +142,12 @@ export function subirRelay() {
             res.end(JSON.stringify({ data: [{ id: "flashmodel" }] }));
             return;
         }
+        if (url.startsWith("/v1/travado")) {
+            // Aceita a conexão e nunca responde. É o relay com defeito, e é o
+            // único jeito de medir o tempo de espera sem esperar de verdade.
+            recebido.push({ metodo: req.method, url, travado: true });
+            return;
+        }
         res.writeHead(404, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "rota desconhecida" }));
     });
@@ -164,8 +170,11 @@ export function subirRelay() {
  *
  * `relayVazio: true` deixa RELAY_URL deserto — o cenário de despejo sem
  * configuração, que tem que falhar ALTO e explicativo, não em silêncio.
+ *
+ * `env` chega ao filho tal qual: é por ele que os cenários de tempo de espera
+ * encurtam o relógio sem sujar o ambiente de quem roda a suíte.
  */
-export function subirServidor({ dist, porta, relayPorta, relayVazio = false }) {
+export function subirServidor({ dist, porta, relayPorta, relayVazio = false, env = {} }) {
     return new Promise((resolucao, rejeicao) => {
         const filho = spawn(process.execPath, [SERVIDOR], {
             env: {
@@ -173,6 +182,7 @@ export function subirServidor({ dist, porta, relayPorta, relayVazio = false }) {
                 PORT: String(porta),
                 DIST_DIR: dist,
                 RELAY_URL: relayVazio ? "" : `http://127.0.0.1:${relayPorta}`,
+                ...env,
             },
             stdio: ["ignore", "pipe", "pipe"],
         });

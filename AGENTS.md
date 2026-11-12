@@ -60,7 +60,7 @@ só se mede em deploy, com chave válida.
 | checagem | como | o que esperar |
 |---|---|---|
 | sintaxe | `node --check chili3d/servidor.mjs teste/*.mjs` | silêncio |
-| suíte completa | `node teste/rodar.mjs` | `VERDE: 2 suítes ok e 6 de 6 mutações provadas` |
+| suíte completa | `node teste/rodar.mjs` | `VERDE: 2 suítes ok e 8 de 8 mutações provadas` |
 | trava da versão | `sed -n 's/^CHILI3D_REF=//p' chili3d.ref` e conferir o `ARG` no Dockerfile | os dois batem (o CI também confere) |
 | coerência do relay | `RELAY_URL` no compose sem `/v1` no fim | `http://9router:20128` |
 | imagem builda | `./deploy/build-local.sh` | termina sem erro e lista `chili3d-dev` |
