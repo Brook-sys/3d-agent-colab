@@ -1,14 +1,11 @@
-# Artefatos de deploy: são regenerados por deploy/empacotar.sh antes de cada build.
-# O dist.tar.gz sozinho tem ~7 MB — não versione.
-deploy/pacotes/
-
-# Dependências instaladas localmente.
-session/node_modules/
-
-# O fork do Chili3D é um repositório git próprio (532 MB com o histórico).
-# Ele fica fora deste versionamento: use um submódulo ou clone separado, e
-# compile o dist/ quando precisar reconstruir a imagem core.
+# O clone do Chili3D é um repositório git próprio (532 MB com o histórico).
+# Ele fica fora deste versionamento: use um clone separado, e compile o dist/
+# quando precisar reconstruir a imagem.
 chili3d-upstream/
+
+# dist gerado localmente: o Dockerfile compila o seu dentro do builder, e imagem
+# nenhuma precisa deste diretório no contexto.
+chili3d/dist/
 
 # Estado de runtime da máquina de desenvolvimento (não do container).
 *.log
@@ -16,8 +13,6 @@ chili3d-upstream/
 .DS_Store
 
 # Configuração LOCAL do OpenCode: carrega o endereço real do host. O valor não
-# pode ir para o repositório (regra de privacidade), e o arquivo não pode ficar
-# versionado com placeholder — o OpenCode o lê como configuração ATIVA do
-# projeto, e `SEU-HOST` não resolve em DNS (era o que derrubava o MCP
-# 3d-agent-colab com ENOTFOUND). Versionado fica o `.exemplo`, com placeholder.
+# pode ir para o repositório (regra de privacidade) — o endereço real do usuário
+# fica na configuração local dele, nunca em arquivo versionado.
 opencode.json

@@ -1,15 +1,11 @@
-# Teste local: builda com ./deploy/build-local.sh e sobe a stack com as imagens
-# locais em vez das do GHCR.
+# Teste local: builda com ./deploy/build-local.sh e sobe a stack com a imagem
+# local em vez da do GHCR.
 #
 #   docker compose -f docker-compose.yml -f deploy/compose.local.yml up -d
 #
 # `pull_policy: never` é o ponto: sem ele, o compose tentaria baixar
-# 3d-agent-colab-<nome>:dev do GHCR, onde essas tags não existem.
+# chili3d-dev:dev do GHCR, onde essa tag não existe.
 services:
-  core:
-    image: 3d-agent-colab-core:dev
-    pull_policy: never
-
-  session:
-    image: 3d-agent-colab-session:dev
+  chili3d:
+    image: chili3d-dev:dev
     pull_policy: never

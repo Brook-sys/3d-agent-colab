@@ -1,69 +1,55 @@
-# 3D Agent Colab — núcleo (core) + sessão (session).
+# chili3d — o app Chili3D, servido, com o /v1/ encaminhado para o relay de IA.
 #
-# Imagens ghcr.io/brook-sys/3d-agent-colab-{core,session}:main, publicadas pelo
-# workflow a cada push na main. O host Docker não compila nada: só faz o pull.
+# Um serviço, uma imagem. O que existia antes — um núcleo Python com API, MCP,
+# registro de peças e validação FDM, mais um container com Chromium headless,
+# ponte WebSocket e companheiro CDP — saiu. O deploy é o Chili3D como vem do
+# commit fixado em chili3d.ref, mais um único adicional: o proxy de /v1/, que é a
+# correção do "Erro: Connection error." (ver docs/assistente-relay.md).
 #
-# Os diretórios de dados precisam existir no host antes do primeiro deploy:
-#   mkdir -p /opt/3d-agent-colab/parts /opt/3d-agent-colab/session
-#   chown 1000:1000 /opt/3d-agent-colab/parts      # o núcleo roda como uid 1000
+# Imagem ghcr.io/brook-sys/chili3d:main, publicada pelo workflow a cada push na
+# main. O host Docker não compila nada: só faz o pull.
+#
+# Nada de volume: o container é stateless e o app é estático. Reiniciar não perde
+# nada, e não há semeadura de registro nem navegador para esperar.
 
 services:
-  core:
-    image: ghcr.io/brook-sys/3d-agent-colab-core:main
-    container_name: 3d-agent-colab-core
+  chili3d:
+    image: ghcr.io/brook-sys/chili3d:main
+    container_name: chili3d
     restart: unless-stopped
     pull_policy: always
-    working_dir: /app
     environment:
-      PARTS_ROOT: ${PARTS_ROOT:-/parts}
-      BRIDGE_URL: ${BRIDGE_URL:-http://session:17400}
-      PORT: ${PORT:-9001}
-      PRINTER_MODEL: ${PRINTER_MODEL:-Elegoo Neptune 4}
-      PUID: ${PUID:-1000}
-      PGID: ${PGID:-1000}
-      FONTE_URL: ${FONTE_URL:-}
-      # Endereço do relay de IA que o assistente nativo do Chili3D usa. Sem
-      # default que resolva: é dado do ambiente do usuário (endereço de rede
-      # real não vai para arquivo versionado). Com ele definido, o assistente
-      # aponta para http://SEU-HOST:8080/relay — SEM /v1, porque o /v1 já
-      # está aqui: o proxy monta RELAY_URL/<caminho>, e um baseURL com /v1
-      # pediria /v1/v1/... no relay. A chamada sai pela MESMA origem da
-      # página — sem CORS no meio. A chave continua sendo colada no assistente
-      # (o chat nativo do app) e vem no header de cada pedido; o núcleo não a
-      # guarda.
-      RELAY_URL: ${RELAY_URL:-}
-    volumes:
-      - /opt/3d-agent-colab/parts:/parts
-    # 9001 publicada duas vezes: 8080 é o endereço do app no navegador. A API
-    # (REST e MCP) fica em 9001, que é o que o opencode.json do projeto usa.
+      # Porta em que o processo escuta DENTRO do container. Não costuma mudar.
+      PORT: ${PORT:-8080}
+      # Raiz do relay de IA, sem /v1: o /v1 é este servidor que põe, e um baseURL
+      # com /v1 pediria /v1/v1/... no relay.
+      #
+      # O default http://9router:20128 é o alias do relay na rede aiNetwork. Troque
+      # aqui se o relay tiver outro endereço na sua rede.
+      RELAY_URL: ${RELAY_URL:-http://9router:20128}
+      # Origem devolvida nos cabeçalhos CORS deste servidor. `*` é o que o relay
+      # faz, e é seguro aqui: a chave não passa por cookie nem por sessão, só
+      # pelo header authorization que o próprio usuário colou no assistente.
+      CORS_ORIGEM: ${CORS_ORIGEM:-*}
+    # Porta publicada parametrizada de propósito: durante a troca da stack antiga
+    # pela nova, as duas coexistem e a 8080 fica ocupada. Sobe com
+    # PORTA_APP=8081, e volta a 8080 quando a antiga sair.
     ports:
-      - "8080:9001"
-      - "9001:9001"
-    networks: [3d-agent-colab]
-
-  session:
-    image: ghcr.io/brook-sys/3d-agent-colab-session:main
-    container_name: 3d-agent-colab-session
-    restart: unless-stopped
-    pull_policy: always
-    init: true
-    shm_size: "1gb"
-    environment:
-      BRIDGE_PORT: ${BRIDGE_PORT:-17373}
-      BRIDGE_HTTP_PORT: ${BRIDGE_HTTP_PORT:-17400}
-      BRIDGE_DATA_DIR: ${BRIDGE_DATA_DIR:-/data}
-      # Só o `?bridge=`: a página conecta de volta na ponte deste container, e
-      # é por ela que o agente externo dirige o documento. Nenhum plugin é
-      # carregado — o deploy é o Chili3D como vem do commit fixado.
-      KIOSK_URL: ${KIOSK_URL:-http://core:9001/?bridge=}
-      FONTE_URL: ${FONTE_URL:-}
-    volumes:
-      - /opt/3d-agent-colab/session:/data
-    # Sem ports de propósito: a ponte é controle remoto sem autenticação sobre
-    # o navegador do kiosk, e só o núcleo precisa dela — pela rede interna.
-    # Para recarregar o kiosk use POST /kiosk/recarregar no núcleo (8080).
-    networks: [3d-agent-colab]
+      - "${PORTA_APP:-8080}:8080"
+    networks:
+      - chili3d
+      # Externa: criada e usada pela stack do relay. Entrar nela é o que permite
+      # falar com o relay pelo nome, sem depender de porta publicada.
+      - aiNetwork
+    healthcheck:
+      # O Dockerfile já traz um; esta linha documenta o intervalo em uso.
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
 networks:
-  3d-agent-colab:
-    name: 3d-agent-colab
+  chili3d:
+    name: chili3d
+  aiNetwork:
+    external: true

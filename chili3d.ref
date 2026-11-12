@@ -1,10 +1,15 @@
-# Versão do Chili3D compilada dentro da imagem `core`.
+# Versão do Chili3D compilada dentro da imagem `chili3d`.
 #
 # O Chili3D não é código deste repositório: o Dockerfile baixa este commit do
 # repositório oficial e o compila. Para atualizar o app, troque o SHA abaixo
 # (e a nota de versão) e rode o workflow "imagens" — nenhum binário entra neste
 # repositório, e o fonte correspondente continua público no repositório oficial,
 # que é a obrigação da licença AGPL-3.0 do Chili3D.
+#
+# O workflow CONFERE que os dois valores abaixo batem com os `ARG` do
+# chili3d/Dockerfile antes de buildar. Se divergirem, a imagem que sobe não
+# contém o commit que este arquivo diz que contém — e ninguém percebe até abrir
+# o fonte do app dentro do container.
 #
 # Como achar o SHA de uma release nova:
 #   gh api repos/xiangechen/chili3d/commits --jq '.[0].sha'

@@ -1,31 +1,20 @@
 name: imagens
 
-# Constrói e publica as duas imagens no GHCR. É o caminho oficial: o
+# Constrói e publica a imagem da stack no GHCR. É o caminho oficial: o
 # docker-compose.yml aponta para ghcr.io e o Portainer só faz o pull.
 #
-#   core    Python 3.12 + build123d + API/MCP + o app Chili3D (estático)
-#   session Playwright/Chromium headless + ponte WebSocket
+# Uma imagem só: `chili3d`. Era duas (`3d-agent-colab-core`, Python + build123d +
+# API/MCP, e `3d-agent-colab-session`, Chromium + ponte WebSocket) e as duas
+# saíram — ver o comentário no alto do docker-compose.yml.
 #
-# Era três imagens: havia uma de nginx só para servir os arquivos estáticos. Ela
-# saiu — o núcleo passou a servir o app (ver o bloco "estático" no fim de
-# core/main.py), o que também satisfaz de graça a regra do PluginManager, que
-# exige que `?plugin=` tenha o mesmo host da página.
-#
-# O plugin que o núcleo servia em /painel saiu do deploy: o assistente de IA
-# nativo do Chili3D assumiu o lugar, e o proxy /relay do núcleo é o que o faz
-# alcançar o relay local sem CORS no caminho.
-#
-# Gatilho: push na main que mexa em algo que entre nas imagens, ou disparo
-# manual. Nada aqui é destrutivo — se o build quebrar, a imagem anterior
-# continua no GHCR e a stack roda com ela.
+# Nada aqui é destrutivo: se o build quebrar, a imagem anterior continua no GHCR
+# e a stack roda com ela.
 
 on:
   push:
     branches: [main]
     paths:
-      - "core/**"
-      - "session/**"
-      - "partes/**"
+      - "chili3d/**"
       - "teste/**"
       - "chili3d.ref"
       - ".github/workflows/imagens.yml"
@@ -36,16 +25,15 @@ permissions:
   packages: write
 
 # O GHCR exige minúsculas no caminho, e as expressões do Actions não têm
-# `lower()`. `github.repository` devolve "Brook-sys/3d-agent-colab", com B
-# maiúsculo, e o buildx rejeita a tag. Por isso o caminho é literal: se a conta
-# mudar de nome, é aqui que se mexe.
+# `lower()`. `github.repository` devolve "Brook-sys/chili3d", com B maiúsculo, e
+# o buildx rejeita a tag. Por isso o caminho é literal: se a conta mudar de
+# nome, é aqui que se mexe.
 #
-# O pacote leva HÍFEN, não barra: `3d-agent-colab-core`. As duas convenções
-# existem no GHCR e escolhemos o hífen por ser o que o picofarm e o
-# orca-slicer-api já usam. A consequência prática é que a URL da API leva o
-# nome do pacote "escapado" — veja o passo de visibilidade abaixo.
+# O nome do pacote leva HÍFEN? Não: agora é `chili3d` sem hífen, e a URL da API
+# do GHCR aceita o nome direto (com hífen, `3d-agent-colab%2Fcore` era a
+# variante que dava 404 — esse problema desapareceu).
 env:
-  IMAGEM: ghcr.io/brook-sys/3d-agent-colab
+  IMAGEM: ghcr.io/brook-sys/chili3d
 
 concurrency:
   group: imagens-${{ github.ref }}
@@ -55,43 +43,71 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - nome: core
-            titulo: núcleo (API + MCP + app)
-          - nome: session
-            titulo: sessão (ponte + kiosk)
     steps:
       - name: checkout
         uses: actions/checkout@v4
 
-      # A ponte e o companheiro CDP são JavaScript que roda no container: um
-      # erro de sintaxe aí não quebra o build do Docker — quebra a sessão em
-      # silêncio (a stack sobe, o kiosk não conecta). `node --check` é barato e
-      # pega o erro grosseiro antes de a imagem ser publicada. Referência solta
-      # ele NÃO pega — para isso existe a suíte abaixo e a verificação
-      # pós-deploy.
-      - name: sintaxe da sessão
+      # O servidor é JavaScript que roda no container: um erro de sintaxe aí não
+      # quebra o build do Docker — quebra o deploy em silêncio (a stack sobe, a
+      # página não responde). `node --check` é barato e pega o erro grosseiro
+      # antes de a imagem ser publicada. Referência solta ele NÃO pega — para
+      # isso existe a suíte abaixo.
+      - name: sintaxe do servidor
         run: |
-          node --check session/bridge-server.mjs
-          node --check session/kiosk-cdp.mjs
+          node --check chili3d/servidor.mjs
+          node --check teste/comum.mjs teste/estatico.mjs teste/proxy.mjs teste/rodar.mjs
 
-      # A suíte do companheiro CDP. Não é enfeite: ela AVALIA o código real
-      # extraído de session/kiosk-cdp.mjs e inclui teste de MUTAÇÃO — cada
-      # mutação quebra de propósito uma parte do arquivo e exige que a suíte
-      # acuse. Sem essa etapa, um verde significaria apenas "rodou".
+      # A suíte do servidor. Não é enfeite: ela sobe o arquivo REAL como
+      # processo filho, com um relay falso do outro lado, e inclui teste de
+      # MUTAÇÃO — cada mutação quebra de propósito uma parte do servidor e exige
+      # que a suíte acuse, exatamente nos cenários previstos.
       #
-      # Foi esta suíte que pegou, antes de ir para produção, o defeito da
-      # navegação no mesmo alvo: contra o código anterior ela falha em dois
-      # cenários e o processo MORRE num terceiro (evento malformado sem
-      # tratamento). Nada disso derrubaria o build do Docker.
-      #
-      # Roda nos dois jobs da matriz porque é barato (~30 s) e porque falhar
-      # antes do buildx economiza os dois builds.
-      - name: testes do companheiro CDP
+      # Foi esta suíte que pegou, antes de ir para produção, dois cenários
+      # vacuoso: `relay-nao-recebe-origin` passava verde porque o `fetch` do
+      # Node não põe `Origin` sozinho, e a medição de streaming olhava o tempo
+      # errado. Nenhum dos dois derrubaria o build do Docker — os dois passariam
+      # verdes sem provar nada.
+      - name: testes do servidor
         run: node teste/rodar.mjs
+
+      # Trava de versão do app. O Dockerfile tem defaults fixos e o chili3d.ref
+      # é a fonte da verdade. Se os dois divergirem, a imagem que sobe não
+      # contém o commit que o repositório diz que contém — e ninguém percebe
+      # até abrir o fonte do app dentro do container.
+      - name: trava da versão do Chili3D
+        run: |
+          REF_REPO="$(sed -n 's/^CHILI3D_REPO=//p' chili3d.ref)"
+          REF_SHA="$(sed -n 's/^CHILI3D_REF=//p' chili3d.ref)"
+          echo "chili3d.ref: repo=$REF_REPO ref=$REF_SHA"
+          if [ -z "$REF_REPO" ] || [ -z "$REF_SHA" ]; then
+              echo "::error title=chili3d.ref incompleto::não achei CHILI3D_REPO/CHILI3D_REF em chili3d.ref"
+              exit 1
+          fi
+          if ! grep -q "ARG CHILI3D_REPO=$REF_REPO" chili3d/Dockerfile; then
+              echo "::error title=repositório divergente::chili3d.ref diz $REF_REPO, o Dockerfile diz outra coisa"
+              exit 1
+          fi
+          if ! grep -q "ARG CHILI3D_REF=$REF_SHA" chili3d/Dockerfile; then
+              echo "::error title=commit divergente::chili3d.ref diz $REF_SHA, o Dockerfile diz outra coisa"
+              exit 1
+          fi
+          echo "trava ok — Dockerfile e chili3d.ref concordam"
+
+      # Import do módulo não é o que precisa de teste (é CommonJS/ESM de
+      # servidor, não pacote), mas o ARG do relé tem de estar coerente com o
+      # compose: um default quebrado aqui vira 502 em produção.
+      - name: coerência do RELAY_URL
+        run: |
+          COMPOSE="$(sed -n 's/^ *RELAY_URL: \${RELAY_URL:-\([^}]*\)}.*/\1/p' docker-compose.yml)"
+          echo "compose: RELAY_URL default = $COMPOSE"
+          if [ -z "$COMPOSE" ]; then
+              echo "::error title=RELAY_URL sem default::o compose precisa de um default legível para o relay"
+              exit 1
+          fi
+          if [ "$COMPOSE" = "http://SEU-RELAY:20128" ]; then
+              echo "::error title=RELAY_URL com placeholder::troque pelo endereço/alias do relay na rede aiNetwork"
+              exit 1
+          fi
 
       - name: buildx
         uses: docker/setup-buildx-action@v3
@@ -105,17 +121,17 @@ jobs:
 
       # Duas tags: `main` (o que o compose usa) e `sha-...` (fixa uma versão
       # para poder voltar atrás sem rebuildar).
-      - name: build e push da imagem ${{ matrix.nome }}
+      - name: build e push da imagem
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./${{ matrix.nome }}/Dockerfile
+          file: ./chili3d/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGEM }}-${{ matrix.nome }}:main
-            ${{ env.IMAGEM }}-${{ matrix.nome }}:sha-${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.nome }}
-          cache-to: type=gha,scope=${{ matrix.nome }},mode=max
+            ${{ env.IMAGEM }}:main
+            ${{ env.IMAGEM }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=chili3d
+          cache-to: type=gha,scope=chili3d,mode=max
 
       # Pacote do GHCR nasce PRIVADO. Sem torná-lo público, o host Docker precisa
       # de credencial (docker login) para puxar, e a stack do Portainer não sobe
@@ -124,10 +140,8 @@ jobs:
       #
       # O GITHUB_TOKEN do Actions traz packages:write, que é o que a PATCH exige.
       #
-      # Sobre a URL: como o pacote usa hífen, o nome NÃO precisa de percent-encode
-      # (`3d-agent-colab%2Fcore` seria a variante com barra, e dá 404 aqui).
-      #
-      # Duas coisas que o primeiro run desta fase ensinou:
+      # Duas coisas que a fase anterior deste workflow ensinou, e que seguem
+      # valendo:
       #   1. um `sleep 8` não é suficiente — o pacote pode levar mais para
       #      aparecer na API depois do push, e o PATCH devolve 404;
       #   2. o PATCH com 200 NÃO prova que o pacote é público (ele pode já ter
@@ -138,13 +152,12 @@ jobs:
       # do Portainer não recria nada, em silêncio.
       - name: pacote público no GHCR
         run: |
-          PACOTE="3d-agent-colab-${{ matrix.nome }}"
           patch="sem-efeito"
           for tentativa in 1 2 3 4 5; do
               if curl -fsSL -X PATCH \
                    -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                    -H "Accept: application/vnd.github+json" \
-                   "https://api.github.com/user/packages/container/$PACOTE" \
+                   "https://api.github.com/user/packages/container/chili3d" \
                    -d '{"visibility":"public"}' >/dev/null; then
                   patch="ok"
                   break
@@ -153,14 +166,14 @@ jobs:
               sleep 10
           done
 
-          TOKEN="$(curl -fsSL "https://ghcr.io/token?scope=repository:brook-sys/$PACOTE:pull&service=ghcr.io" \
+          TOKEN="$(curl -fsSL "https://ghcr.io/token?scope=repository:brook-sys/chili3d:pull&service=ghcr.io" \
                    | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
           if curl -fsSL -o /dev/null \
                -H "Authorization: Bearer $TOKEN" \
                -H "Accept: application/vnd.oci.image.index.v1+json" \
-               "https://ghcr.io/v2/brook-sys/$PACOTE/manifests/main"; then
-              echo "pacote $PACOTE público — pull anônimo OK (PATCH: $patch)"
+               "https://ghcr.io/v2/brook-sys/chili3d/manifests/main"; then
+              echo "pacote chili3d público — pull anônimo OK (PATCH: $patch)"
           else
-              echo "::error title=Pacote $PACOTE não está público::o pull anônimo falhou; o host Docker não puxa sem docker login. Ajuste em Configurar acesso do pacote."
+              echo "::error title=Pacote chili3d não está público::o pull anônimo falhou; o host Docker não puxa sem docker login. Ajuste em Configurar acesso do pacote."
               exit 1
           fi
