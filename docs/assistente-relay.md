@@ -206,6 +206,46 @@ Duas armadilhas de configuração, ambas já medidas:
   URL Base dele fica **sem** `/v1` — e o relay local, OpenAI-compatível, não fala
   esse dialeto.
 
+### Como distinguir "o proxy não repassou a chave" de "o relay rejeitou a chave"
+
+Medido, e o resultado é contra-intuitivo: **uma chave inválida e a ausência de
+chave dão a mesma resposta** — `401 {"error":"API key required for remote API
+access"}`. Portanto, testar pelo proxy com uma chave bogus não distingue os dois
+casos, e um teste assim passa a impressão errada de que a chave não é repassada.
+
+O que separa as hipóteses é o **controle**: a mesma chave, o mesmo corpo, direto
+no relay sem passar pelo proxy. Se os dois derem o mesmo 401, o proxy está
+inocente — e a chave é que o relay não aceita. Foi assim que se fechou essa
+questão: com a chave do usuário, os dois caminhos devolveram 401 idêntico, e a
+busca passou a ser na chave, não no proxy.
+
+O middleware do relay lê a chave de quatro lugares, e qualquer um serve
+(`middleware.js`, função `aQ`): `Authorization: Bearer <chave>`, `x-api-key`,
+`x-goog-api-key`, e `?key=` na query. Nosso proxy repassa todos — ele só remove
+`origin`, `host`, `accept-encoding` e companhia.
+
+### O que a verificação em deploy mediu, e o que não mediu
+
+Medido na stack nova (container `Up (healthy)`, publicado, rede `aiNetwork`):
+
+- `/healthz` → `200`, com o relay configurado; `/` → `200 text/html`; rota
+  profunda → `200`; asset inexistente → `404`;
+- preflight `/v1/chat/completions` → `204` com os três cabeçalhos;
+- `/v1/chat/completions` **com `/v1`** → atravessa e devolve a resposta do relay
+  (`401 application/json`, com `access-control-allow-origin: *`);
+- `/chat/completions` **sem `/v1`** → `200 text/html` (o fallback de SPA — a
+  armadilha acima, e um 200 que parece sucesso);
+- o assistente está dentro da imagem: o bundle carregado sob demanda contém
+  `dangerouslyAllowBrowser`, `APIConnectionError`, `Connection error.` e
+  `chat/completions` — 17,9 MB de `dist`, plugins presentes;
+- o relay responde a outros clientes no mesmo instante (modelo `topmodel` servido
+  normalmente), o que descarta relay morto.
+
+**Não medido:** modelo respondendo pelo assistente no navegador. A chave que se
+tinha era rejeitada pelo próprio relay — o controle acima prova que não é o
+proxy. Sem chave aceita, essa última milha continua em aberto, e nenhum teste
+deste repositório a alcança: o relay da suíte é falso de propósito.
+
 ---
 
 ## Como reproduzir o diagnóstico
