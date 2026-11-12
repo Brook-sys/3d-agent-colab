@@ -148,7 +148,8 @@ const CENARIOS = [
         cenario: `{ ponte: "conectada", newDocument: { ok: true, data: { documentId: "d", name: "sem-nome" } } }`,
         semParte: true,
         asserts: `
-            chamouSemArgs: /criado "sem-nome"/.test(log()),
+            chamouSemArgs: Object.keys(dom.ultimoArgs || {}).length === 0,
+            criouSemNome: /criado "sem-nome"/.test(log()),
             semAvisoDeErro: !/inesperado|falhou/.test(log()),
         `,
     },

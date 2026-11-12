@@ -1,8 +1,13 @@
 # Usando pelo OpenCode (MCP)
 
-O caminho "agente externo": o OpenCode (ou qualquer cliente MCP) fala com o núcleo por streamable-http e age **no servidor e na página** — publica versões, valida, registra peças, ajusta variáveis, conversa com você pela mesma fila do painel.
+O caminho "agente externo": o OpenCode (ou qualquer cliente MCP) fala com o núcleo por streamable-http e age **no servidor e na página** — publica versões, valida, registra peças, ajusta variáveis, conversa com você pela mesma fila que o assistente do Chili3D lê.
 
 Endpoint: `http://SEU-HOST:9001/mcp` · protocolo **2024-11-05** · stateless.
+
+> Existe um **segundo** servidor MCP neste projeto: o oficial do Chili3D,
+> `@chili3d/mcp`, que dirige a aba do seu próprio navegador em vez do kiosk.
+> Ele é configuração local (`opencode.json`) e está na
+> [seção 7](#7-o-mcp-oficial-do-chili3d-chili3dmcp).
 
 ---
 
@@ -178,7 +183,7 @@ A ordem importa: **sem `?bridge=` na página não há ponte, e sem ponte não h�
 ## 5. Regras que não se quebram
 
 - **Unidades em milímetros, ângulos em graus.** Nenhuma configuração muda isso.
-- **Não existe ferramenta de fechar documento.** `new_document` recusa com documento aberto. Para trocar de peça: mude `?part=` na URL e peça o recarregamento (`POST /kiosk/recarregar`).
+- **Não existe ferramenta de fechar documento.** `new_document` recusa com documento aberto; trocar de peça é pedir recarga (`POST /kiosk/recarregar`). Nenhum parâmetro de URL abre peça: `?part=` não carrega STEP nem registro. Quem ainda o lê é o companheiro CDP, e só para dar **nome** ao documento criado no boot (`new_document({ name: parte })`) — o `KIOSK_URL` de produção não o usa, e o documento nasce `Untitled`.
 - **`export_nodes` não devolve os bytes:** devolve metadados e entrega o STEP como download do navegador. O kiosk permite o download em `$DATA_DIR/capturas`, a ponte publica em `GET /capturas/<nome>` e é assim que o núcleo recebe a geometria. Ignorar esse caminho e tentar ler o STEP do retorno da ferramenta não funciona.
 - **`run_program`/`run_parametric` criam formas, não features de corpo paramétrico.**
 - **4002 = outra aba assumiu a ponte.** Duas abas com `?bridge=` não dividem a ponte: a nova derruba a anterior.
@@ -193,6 +198,84 @@ A ordem importa: **sem `?bridge=` na página não há ponte, e sem ponte não h�
 - **MCP stateless.** Cada chamada precisa do `initialize` implícito do cliente; não há sessão de conversa no servidor.
 - **A fila de mensagens é um arquivo JSON** (`_estado/mensagens/conversa.json`), com as últimas 500 guardadas. Não é log durável: é quadro de avisos.
 - **`validar` mede métrica, não manufaturabilidade** — veja [arquitetura](arquitetura.md#validação-o-que-é-medido-de-fato).
+
+---
+
+## 7. O MCP oficial do Chili3D (`@chili3d/mcp`)
+
+Além do MCP deste núcleo existe o servidor MCP **oficial do Chili3D**,
+publicado no npm como `@chili3d/mcp`. Ele não passa pelo núcleo: dirige
+diretamente a aba do navegador que estiver com `?bridge=`.
+
+| | MCP do núcleo (`3d-agent-colab`) | MCP oficial (`chili3d`) |
+|---|---|---|
+| de onde | este repositório | `npx -y @chili3d/mcp@0.1.0` |
+| transporte | streamable-http, remoto (`http://SEU-HOST:9001/mcp`) | stdio, local (`npx … mcp`) |
+| ferramentas | 13, de servidor (registro, validação, publicação) | 32, da página (modelagem, vista, seleção) |
+| age sobre | o servidor **e** a página, pela ponte do kiosk | a aba do **próprio usuário** |
+| requisito | o host alcançável em rede | o daemon no **mesmo host** do navegador |
+
+Medido ponta a ponta contra o app em produção, com o pacote 0.1.0 instalado
+localmente e um Chromium headless:
+
+- `chili3d-mcp start --app-url http://SEU-HOST:8080 --port 17373 --no-open` →
+  daemon escutando em `127.0.0.1:17373`, sessão em
+  `~/.chili3d-mcp/session.json`, log em `~/.chili3d-mcp/daemon.log`;
+- com a página em `http://SEU-HOST:8080/?bridge=17373` em primeiro plano:
+  `status` → `connected: true`, `toolCount: 30`;
+- `new_document` criou o documento; `run_program` com uma `box` 20×20×20 →
+  nó criado e `shape.volume` = **7999.999999999998** (o kernel OCCT rodou
+  dentro da página);
+- pelo stdio (`chili3d-mcp mcp`, que é como um cliente MCP o executa):
+  `initialize` → `protocolVersion: 2024-11-05`, servidor `chili3d-mcp`;
+  `tools/list` → **32 ferramentas** com a página conectada, **2** sem ela
+  (`chili3d_open`, `chili3d_status`) — o catálogo é dinâmico.
+
+Outros comandos do CLI: `stop`, `restart`, `open`, `list`, `schema <tool>`,
+`call <tool> --json <arquivo>` e `shot [arquivo]`. O `init --agent <nome>`
+escreve o arquivo de entrada que cada agente precisa (claude, codex, cursor,
+workbuddy, generic).
+
+### Requisitos e limites, medidos
+
+- **A página sempre conecta em `ws://127.0.0.1:<porta>/ws`**
+  (`packages/ai/src/bridge/index.ts`, linha 102). Não há como apontar a aba
+  para outro host: o daemon precisa rodar na **mesma máquina do navegador**.
+  Por isso o kiosk do container **não** pode ser dirigido por esse MCP de fora
+  — o WS dele é sempre `127.0.0.1`. Para o kiosk, use o MCP do núcleo.
+- **A aba precisa estar em primeiro plano.** Aba em fundo sofre throttling e a
+  conexão cai: no sandbox, com WebGL por software, a ponte caía em 60–90 s e o
+  `shot` falhava com *No Chili3D page is connected*.
+- **Uma página por vez.** Duas abas com `?bridge=` disputam a ponte (4002): a
+  nova derruba a anterior — mesma regra do kiosk.
+- **WebGL headless depende de flags.** O Chromium do sistema com
+  `--use-angle=swiftshader` falha onde não há superfície Vulkan
+  (`VK_KHR_surface` não suportada); o `chrome-headless-shell` do Playwright com
+  `--no-zygote --single-process` criou contexto. As flags exatas do kiosk estão
+  em `session/start.sh` — referência para quem precisar de WebGL headless.
+- **Convive com o chat embutido.** Os dois falam com o mesmo registro de
+  ferramentas da página; nenhum trava o outro.
+- **O catálogo some sem página.** Sem aba conectada, `tools/list` devolve só
+  `chili3d_open` e `chili3d_status`: não é falha, é a página que não está lá.
+
+### Configurar no OpenCode
+
+```sh
+opencode mcp add chili3d -- npx -y @chili3d/mcp@0.1.0 mcp --app-url http://SEU-HOST:8080
+opencode mcp list      # ✓ chili3d  connected
+```
+
+Na primeira execução o `npx` baixa o pacote: `startup: 90000` no timeout folga
+esse boot.
+
+Qual escolher:
+
+- **publicar, validar, registrar peça, conversar pela fila** → MCP do núcleo. É
+  o único que fala com o servidor.
+- **modelar na própria aba, ver a tela, clicar na viewport** → MCP oficial. É o
+  único que dirige a aba do usuário.
+
+Os dois podem estar ligados ao mesmo tempo: são independentes.
 
 ---
 

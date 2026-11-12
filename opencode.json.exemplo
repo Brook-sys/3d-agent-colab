@@ -12,6 +12,20 @@
           "catalog": 60000,
           "execution": 600000
         }
+      },
+      "chili3d": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@chili3d/mcp@0.1.0",
+          "mcp",
+          "--app-url",
+          "http://SEU-HOST:8080"
+        ],
+        "timeout": {
+          "startup": 90000
+        }
       }
     }
   }

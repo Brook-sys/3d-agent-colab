@@ -70,7 +70,11 @@ async function lerPedidos() {
 
 const BRIDGE_HTTP = `http://127.0.0.1:${process.env.BRIDGE_HTTP_PORT || 17400}`;
 
-/** A peça que a página trabalha, lida da própria URL (`?part=`). */
+/**
+ * O NOME do documento a criar no boot, lido da URL (`?part=`). Não abre peça
+ * do registro — nenhum parâmetro de URL abre: sem isso o documento nasce
+ * `Untitled`. O kiosk de produção não usa, então o efeito prático é nenhum.
+ */
 function parteDaUrl(url) {
     try {
         return new URL(url).searchParams.get("part") || "";
@@ -146,9 +150,9 @@ async function chamarFerramenta(nome, args = {}) {
  * CAMADA 1 — a raiz: o kiosk precisa de um documento aberto.
  *
  * Medido neste deployment: `hasActiveDocument: false` e `app.activeView:
- * false`, porque `KIOSK_URL` traz `?part=` — parâmetro que só o NOSSO painel
- * lê. O app abre documento por `?url=`/`?model=` (`startupParams.ts` do
- * Chili3D); `?part=` ele ignora.
+ * false`. O app abre documento por `?url=`/`?model=` (`startupParams.ts` do
+ * Chili3D), e nenhum deles casa com o que o kiosk precisa — por isso o
+ * documento é criado pela ponte, com `new_document`.
  *
  * A consequência não é só estética. `CommandService.checking()` recusa em
  * SILÊNCIO todo comando que não seja `isApplicationCommand` quando não há
@@ -168,7 +172,7 @@ async function chamarFerramenta(nome, args = {}) {
  * O preço, dito na cara: o agente passa a encontrar documento aberto no boot.
  * O primeiro passo dele muda de "criar documento" para "usar o documento" — e
  * como não existe ferramenta de fechar documento, um documento novo exige
- * recarregar com outro `?part=`.
+ * recarregar com outro `?part=` — que só troca o nome, não a geometria.
  */
 async function garantirDocumento(alvo) {
     const parte = parteDaUrl(alvo.url);
