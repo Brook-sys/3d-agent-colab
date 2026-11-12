@@ -1,9 +1,9 @@
 # 3D Agent Colab
 
-> Criação assistida por IA de peças 3D paramétricas: uma instrução digitada — no terminal do agente **ou** dentro da interface do Chili3D — se transforma numa peça modelada, publicada, medida e validada para impressão. Tudo dentro de containers, sem build na máquina do Docker.
+> O Chili3D original, empacotado num container, com o assistente de IA nativo funcionando contra o relay local.
 
 ![CI](https://github.com/Brook-sys/3d-agent-colab/actions/workflows/imagens.yml/badge.svg)
-![imagens](https://img.shields.io/badge/GHCR-ghcr.io%2Fbrook--sys%2F3d--agent--colab-2496ED?logo=docker&logoColor=white)
+![imagens](https://img.shields.io/badge/GHCR-ghcr.io%2Fbrook--sys%2Fchili3d-2496ED?logo=docker&logoColor=white)
 ![status](https://img.shields.io/badge/status-prot%C3%B3tipo-orange)
 ![app](https://img.shields.io/badge/app-Chili3D%20AGPL--3.0-blueviolet)
 
@@ -11,187 +11,129 @@
 
 ## O que é
 
-Um pipeline verificável de modelo → versão → medição → validação, com **dois caminhos de IA** que cooperam pela mesma fila de mensagens:
+Um container, uma imagem: o **Chili3D** servido tal qual vem do commit fixado em
+[`chili3d.ref`](chili3d.ref), mais um único adicional — um processo Node que
+encaminha `/v1/*` para o relay de IA local.
+
+Esse adicional existe por um motivo medido, não por preferência: o assistente
+nativo do Chili3D, apontado direto para os modelos do relay, respondia
+**"Erro: Connection error."** para qualquer pedido. A causa é CORS no relay, e a
+cadeia completa está em [docs/assistente-relay.md](docs/assistente-relay.md) —
+com a reprodução em navegador real e o controle que separa as hipóteses.
 
 ```
-   ┌──────────────┐        ┌───────────────────────────────┐        ┌──────────────┐
-   │  você        │        │  core  (FastAPI + MCP)        │        │  session     │
-   │  navegador   │───────▶│  · registro /parts            │◀──────▶│  · ponte WS  │
-   │  Chili3D +   │  8080  │  · validação FDM (build123d)  │  :9001 │  · kiosk     │
-   │  IA nativa   │◀───────│  · serve o app e /relay       │        │    Chromium  │
-   └──────────────┘  9001  └───────────────┬───────────────┘        └──────────────┘
-            ▲                             │  v000N/                    ▲
-            │  mesma fila de conversa     ▼                            │ mesma ferramenta
-   ┌──────────────┐              STEP real exportado pelo kernel OCCT   │ (30 ferramentas)
-   │  agente      │───────────────▶  medida + veredicto + commit git ───┘
-   │  OpenCode    │  MCP           (a medição entra no histórico)
-   │  (13 tools)  │
-   └──────────────┘
+   ┌──────────────────────────────────────────────┐
+   │  chili3d  (node:20-bookworm-slim)            │
+   │                                              │
+   │  · serve o app (estático, SPA)        :8080   │
+   │  · encaminha /v1/* → relay de IA              │
+   │  · responde o preflight de /v1/ (204)         │
+   └───────────────────┬──────────────────────────┘
+                       │  rede aiNetwork (externa)
+                       ▼
+              ┌─────────────────┐
+              │  relay de IA    │
+              │  9router :20128 │
+              └─────────────────┘
 ```
 
-A geometria que o agente manda construir é a geometria que foi arquivada — **STEP real, exportado pelo kernel OCCT do Chili3D** — e as medições vêm de um portal independente em Python. Nada de malha "de verdade" e nada de número estimado: o `validacao.json` diz o que foi medido de fato e o que não foi.
-
-## Diferenciais
-
-| | |
-|---|---|
-| **Geometria real, não aproximada** | o STEP sai do kernel OCCT (WASM) do Chili3D, pelo mesmo caminho que um humano usaria |
-| **Validação independente** | portal Python em processo separado mede o BREP: envelope, topologia, volume, massa, delta contra a versão anterior |
-| **Dois caminhos de IA, um estado** | o assistente embutido do Chili3D (age no documento) e o agente externo por MCP (age pelo servidor) leem a **mesma** fila de mensagens e o mesmo registro |
-| **Deploy sem build no host** | as imagens vêm do GHCR; o host Docker só faz pull. Nada de toolchain, nada de Node, nada de Python na máquina |
-| **Registro versionado** | cada publicação é um commit git em `/parts/.git` **com a validação dentro** — a medição e a geometria nascem juntas no histórico |
-| **Kiosk headless descartável** | a sessão do navegador é cache: perdê-la custa um recarregamento, não uma versão publicada |
+O pedido do assistente sai da **mesma origem** da página. Por isso não existe
+preflight nenhum no caminho, e por isso nada é barrado.
 
 ## Começo rápido
 
-**1. Crie os diretórios de dados no host Docker** (binds, não volumes — ver [Dados](#dados)):
+O deploy é pelo Portainer: a stack aponta para `ghcr.io/brook-sys/chili3d:main` e
+o host Docker só faz o pull. Nada de toolchain, nada de Node, nada de Python na
+máquina.
+
+Para conferir que subiu:
 
 ```sh
-mkdir -p /opt/3d-agent-colab/parts /opt/3d-agent-colab/session
-chown 1000:1000 /opt/3d-agent-colab/parts      # o núcleo roda como uid 1000
+curl -s http://SEU-HOST:8080/healthz          # {"ok":true,"servico":"chili3d","relay":"..."}
+curl -s -o /dev/null -w '%{http_code}' -X OPTIONS http://SEU-HOST:8080/v1/chat/completions
+# 204 — o preflight é respondido por nós, não repassado ao relay
 ```
 
-**2. Suba a stack** (Portainer → Stacks → Add stack, ou `docker compose up -d`). O compose completo está em [`docker-compose.yml`](docker-compose.yml); o essencial:
-
-```yaml
-services:
-  core:
-    image: ghcr.io/brook-sys/3d-agent-colab-core:main
-    container_name: 3d-agent-colab-core
-    ports: ["8080:9001", "9001:9001"]     # 8080 = app · 9001 = REST + MCP
-    volumes: ["/opt/3d-agent-colab/parts:/parts"]
-  session:
-    image: ghcr.io/brook-sys/3d-agent-colab-session:main
-    container_name: 3d-agent-colab-session
-    volumes: ["/opt/3d-agent-colab/session:/data"]
-    # sem `ports:` de propósito — a ponte é controle remoto sem autenticação
-networks:
-  3d-agent-colab: { name: 3d-agent-colab }
-```
-
-**3. Abra o app**: `http://SEU-HOST:8080/?bridge=`
-
-O `&bridge=` é o que faz a página conectar de volta na ponte — e é por ela que o agente externo dirige o documento. Ele **não** tem relação com o assistente de IA: o chat do Chili3D existe em qualquer página (import estático no `editor.ts` do app). No seu navegador não há ponte rodando, então a aba vai tentar `ws://127.0.0.1:17373` a cada 8 s e falhar: é ruído de console, não defeito.
-
-**4. Ligue a IA embutida**: crie um documento primeiro (**New** na tela inicial — sem documento aberto o app recusa o comando em silêncio), clique em **Manager ▸ Other ▸ AI Assistant**, cole a chave na engrenagem e escolha o provedor. Se o provedor é o relay da casa (sem CORS), aponte para `http://SEU-HOST:8080/relay` — ver `RELAY_URL` abaixo. No kiosk o documento é criado no boot e a IA já abre sozinha. Veja [uso com IA no Chili3D](docs/uso-chili3d-ia.md).
-
-**5. Aponte o agente** para `http://SEU-HOST:9001/mcp`. Veja [uso pelo OpenCode](docs/uso-opencode.md).
-
-## Duas formas de usar
-
-| | **IA dentro do Chili3D** | **Agente externo (OpenCode)** |
-|---|---|---|
-| onde roda | dentro da aba do app | no seu terminal, com MCP |
-| o que precisa | chave de API na engrenagem do chat | `opencode.json` apontando para `:9001/mcp` |
-| age sobre | o documento aberto | o documento **e** o registro (publicar, validar, arquivar) |
-| melhor para | modelar, ajustar variáveis, explorar | publicar versões, validar, registrar, conversar com você |
-| persiste | conversa no documento (IndexedDB) | registro `/parts` + git |
-
-Os dois **cooperam**: a fila de mensagens é a mesma (`GET/POST /mensagens` no núcleo), então você pode pedir no assistente e deixar o agente executar, ou o contrário. Guia completo em [docs/uso-chili3d-ia.md](docs/uso-chili3d-ia.md) e [docs/uso-opencode.md](docs/uso-opencode.md).
-
-## Arquitetura
-
-Dois containers, um processo cada, e duas escolhas que definem o resto: **o núcleo também serve o app** (antes havia um terceiro container de nginx só para os arquivos estáticos) e **faz o proxy do relay de IA** (`/relay/`). A primeira existe porque o `PluginManager` do Chili3D exige que `?plugin=` tenha o **mesmo host** da página. A segunda porque o assistente nativo chama o provedor direto do navegador, e um relay local sem CORS morre no preflight — servindo o relay pela mesma origem da página, não há preflight nenhum. O preço de cada uma está anotado em [docs/arquitetura.md](docs/arquitetura.md).
-
-```
-core (ghcr.io/brook-sys/3d-agent-colab-core:main)
-  FastAPI + MCP (13 ferramentas) + registro /parts + portal FDM + estático
-  porta do container: 9001  →  host: 8080 (app) e 9001 (REST/MCP)
-
-session (ghcr.io/brook-sys/3d-agent-colab-session:main)
-  ponte WebSocket (protocolo oficial do Chili3D) + Chromium headless (kiosk) + companheiro CDP
-  porta 17373 (WS) e 17400 (HTTP)  →  NÃO publicadas no host
-```
-
-Detalhes, protocolo, trade-offs e os modos de falha medidos: [docs/arquitetura.md](docs/arquitetura.md).
-
-## Documentação
-
-| documento | conteúdo |
-|---|---|
-| [docs/arquitetura.md](docs/arquitetura.md) | containers, protocolo da ponte, fluxo do STEP, trade-offs e os modos de falha já medidos |
-| [docs/uso-opencode.md](docs/uso-opencode.md) | configurar o MCP, as 13 ferramentas, um turno completo de trabalho |
-| [docs/uso-chili3d-ia.md](docs/uso-chili3d-ia.md) | ligar e configurar a IA embutida, os 3 provedores, o que ela pode fazer, como ela aprende o projeto |
-| [docs/operacao.md](docs/operacao.md) | deploy, redeploy, backup, logs e a tabela de sintoma → causa → ação |
-
-## Estrutura do repositório
-
-```
-core/            FastAPI + MCP + registro + build123d + servidor do app + proxy /relay
-session/         ponte WebSocket + kiosk Chromium + companheiro CDP
-partes/          semente do registro (espacador, suporte-l) — copiada no primeiro boot
-deploy/          ciclo curto de desenvolvimento (build local + compose local)
-docs/            documentação (este índice)
-.github/         workflow que publica as imagens no GHCR
-chili3d.ref      commit do Chili3D compilado na imagem core
-AGENTS.md        protocolo para agentes de IA que trabalham neste repo
-```
+Para usar o assistente: abra o app, cole a chave do relay na interface (ela fica
+na memória do navegador e evapora a cada recarregamento — é decisão do Chili3D,
+não deste repo) e aponte o `baseURL` para a **própria origem**, sem `/v1`:
+`http://SEU-HOST:8080`. O `/v1` é este servidor que põe.
 
 ## Configuração
 
-Todas as variáveis têm default e o campo **Env** da stack no Portainer sobrescreve o que for específico:
-
-| variável | serviço | default | para quê |
-|---|---|---|---|
-| `PARTS_ROOT` | core | `/parts` | raiz do registro de peças |
-| `BRIDGE_URL` | core | `http://session:17400` | endereço da ponte na rede interna |
-| `PORT` | core | `9001` | porta que o uvicorn escuta |
-| `PRINTER_MODEL` | core | `Elegoo Neptune 4` | impressora usada no relatório |
-| `PUID` / `PGID` | core | `1000` | uid/gid do processo |
-| `BRIDGE_PORT` | session | `17373` | porta WebSocket da ponte |
-| `BRIDGE_HTTP_PORT` | session | `17400` | porta HTTP da ponte |
-| `BRIDGE_DATA_DIR` | session | `/data` | capturas, perfil do Chromium, pedidos |
-| `KIOSK_URL` | session | `http://core:9001/?bridge=` | página que o kiosk abre |
-| `RELAY_URL` | core | vazio | endereço do relay de IA (ex.: `http://SEU-HOST:20128/v1`). Sem ele o `/relay/` responde 503 — de propósito |
-| `FONTE_URL` | ambos | vazio | canal legado de atualização por HTTP |
-
-Nenhuma é segredo — e a chave do relay também **não** entra aqui: ela é colada na engrenagem do assistente, no navegador, e o núcleo só a repassa. O que **não** deve ir para arquivo versionado é endereço da sua máquina — `FONTE_URL` e `RELAY_URL` existem para isso e ficam vazios por padrão.
-
-## Dados
-
-| caminho no host | montado em | contém |
+| variável | default | o que é |
 |---|---|---|
-| `/opt/3d-agent-colab/parts` | `/parts` (core) | registro, `_estado/`, `.git` |
-| `/opt/3d-agent-colab/session` | `/data` (session) | perfil do Chromium, capturas `.step`, pedidos do kiosk |
+| `PORTA_APP` | `8080` | porta publicada no host. Parametrizada porque durante a troca da stack antiga pela nova as duas coexistem e a 8080 fica ocupada |
+| `RELAY_URL` | `http://9router:20128` | raiz do relay, **sem `/v1`**. O default é o alias do relay na rede `aiNetwork` |
+| `CORS_ORIGEM` | `*` | origem devolvida nos cabeçalhos CORS deste servidor |
+| `PORT` | `8080` | porta em que o processo escuta **dentro** do container |
 
-O caminho é visível e entra no backup do `/opt`. Um `/parts` sem o marcador `.semeadura` é **semeado** da imagem no primeiro boot — inclusive se tiver conteúdo, e `cp -a` sobrescreve os slugs coincidentes. Com o marcador presente, **nunca** é sobrescrito: é assim que o histórico sobrevive a um redeploy. Para começar limpo, esvazie o diretório antes de subir a stack.
+A rede `aiNetwork` é declarada `external` no compose: ela é criada pela stack do
+relay. Entrar nela é o que permite falar com o relay pelo nome.
 
-## Operação
+## Estrutura
 
-```sh
-# redeploy: puxa a imagem nova e recria os dois containers
-#   Portainer → stack 3d-agent-colab → Update → Repull image and redeploy
-# os binds em /opt preservam os dados nos dois caminhos
-
-# conferir o que está rodando (o healthcheck do núcleo consulta a ponte)
-curl -s http://SEU-HOST:9001/health           # {"ok":true,"ponte":{"conectada":true,...}}
-
-# trocar de peça no kiosk exige página limpa (não há como fechar documento)
-curl -X POST http://SEU-HOST:8080/kiosk/recarregar
-
-# as 13 ferramentas MCP
-curl -X POST http://SEU-HOST:9001/mcp -H 'content-type: application/json' \
-     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
+```
+chili3d/     Dockerfile + servidor.mjs (estático + proxy /v1/)
+teste/       suíte do servidor, com teste de mutação
+deploy/      ciclo curto: build local com os mesmos Dockerfiles
+docs/        assistente-relay.md — o diagnóstico completo
+chili3d.ref  commit do Chili3D compilado na imagem
 ```
 
-O console do kiosk **não** está no `docker logs`: o `start.sh` redireciona o Chromium para `/data/chrome.log` e o companheiro CDP para `/data/kiosk-cdp.log`. Logs Docker têm prefixo binário de 8 bytes — filtre `[\x00-\x08\x0e-\x1f]` antes de ler. A tabela completa de sintoma → causa → ação está em [docs/operacao.md](docs/operacao.md).
+## Testes
+
+```sh
+node teste/rodar.mjs
+```
+
+Leva ~15 s, sem Docker e sem rede: o servidor real sobe como processo filho, com
+um relay falso do outro lado. Além das suítes, a terceira etapa **introduz
+defeitos de propósito** e exige que a suíte acuse, exatamente nos cenários
+previstos — foi assim que dois cenários vacuosos foram pegos antes de ir para
+produção. Os detalhes estão em [teste/README.md](teste/README.md).
 
 ## Limitações conhecidas
 
-Este repositório é um **protótipo**. As fragilidades são reais, não teóricas, e a lista completa está em [docs/operacao.md](docs/operacao.md#limitações-conhecidas). As três que mais importam:
+Este repositório é um **protótipo**. As fragilidades são reais, não teóricas:
 
-- **Sem autenticação em lugar nenhum.** `REST`, `MCP` e o relay da ponte são abertos; 8080 e 9001 são públicos. Quem alcança o host publica versões, escreve na fila de conversa e dirige o kiosk. O `/relay/` entra na mesma conta: qualquer um que alcance a porta 8080 pode queimar cota do relay — mas precisa da chave, e ela não está no servidor.
-- **O estado do documento vive na RAM do kiosk.** Reiniciar a sessão perde a geometria não publicada — o registro é a única memória durável.
-- **A validação FDM é métrica, não veredicto de manufaturabilidade.** O portal mede envelope, volume, topologia e massa. Parede mínima, furo, overhang e ponte estão **declarados** no `PROCESSO` do código, mas **não** são medidos na geometria — o `validacao.json` carrega um campo `limitacoes` dizendo isso.
+- **A última milha não foi medida.** A suíte usa um relay falso. O teste com
+  **chave válida e modelo real** — assistente apontado, chave colada, modelo
+  respondendo — só se faz em deploy, e não foi feito. Até ser feito, a correção
+  está provada até a borda do navegador, e não além dela.
+- **Sem autenticação em lugar nenhum.** Quem alcança a porta 8080 alcança o relay
+  pela nossa origem, sem barreira de CORS no caminho. Queimar cota do relay não
+  exige chave de ninguém — mas usar um **modelo** exige a chave, e ela não está
+  no servidor.
+- **O proxy não filtra caminhos.** `/v1/*` vai integralmente para o relay, o que
+  for pedido. Num relay OpenAI-compatível isso é a API toda; se o relay tiver
+  rota sensível sob `/v1/`, ela fica alcançável por quem alcança o container.
+- **Sem volume.** O container é stateless e o estado do documento vive na RAM do
+  navegador: recarregar perde a geometria não salva. É cache, não memória durável.
+- **A chave evapora a cada F5.** `settings.ts` do pacote `ai` do Chili3D guarda a
+  chave em memória. É decisão do app, não deste repo — mas significa que o
+  assistente precisa da chave de novo depois de qualquer recarga.
+- **`/healthz` não testa o relay.** Ele diz que o servidor está de pé, não que o
+  relay responde. Conferir o relay é verificação pós-deploy.
 
 ## Licenças
 
-O app servido pela imagem `core` é o **Chili3D**, **AGPL-3.0** (`xiangechen/chili3d`, commit fixado em [`chili3d.ref`](chili3d.ref)); ele é compilado do fonte a cada build.
+O app servido pela imagem é o **Chili3D**, **AGPL-3.0**
+(`xiangechen/chili3d`, commit fixado em [`chili3d.ref`](chili3d.ref)); ele é
+compilado do fonte a cada build, e o fonte correspondente continua público no
+repositório oficial — que é a obrigação da licença.
 
-O código **deste** repositório (`core/`, `session/`) não tem licença declarada — escolha em aberto, não esquecimento: sem `LICENSE`, o padrão legal é "todos os direitos reservados".
+O código **deste** repositório (`chili3d/servidor.mjs`, `teste/`) não tem licença
+declarada — escolha em aberto, não esquecimento: sem `LICENSE`, o padrão legal é
+"todos os direitos reservados".
 
 ## Contribuindo
 
-Commits no formato `<emoji> <tipo>: <descrição>` (`✨ feat` · `🐛 fix` · `♻️ refactor` · `📝 docs` · `🔧 chore`). O caminho oficial de mudança é **commit + CI**: o Portainer só faz pull. Para iterar sem CI, existe o ciclo curto em [`deploy/`](deploy/) (build local com os mesmos Dockerfiles).
+Commits no formato `<emoji> <tipo>: <descrição>` (`✨ feat` · `🐛 fix` ·
+`♻️ refactor` · `📝 docs` · `🔧 chore`). O caminho oficial de mudança é
+**commit + CI**: o Portainer só faz pull. Para iterar sem CI, existe o ciclo
+curto em [`deploy/`](deploy/) — build local com os mesmos Dockerfiles.
 
-Se você vai pedir trabalho a um agente de IA neste repositório, comece por [AGENTS.md](AGENTS.md): ele descreve o protocolo de colaboração, as regras que não se quebram e o que conferir antes de publicar.
+Se você vai pedir trabalho a um agente de IA neste repositório, comece por
+[AGENTS.md](AGENTS.md): ele descreve o protocolo de colaboração, as regras que
+não se quebram e o que conferir antes de publicar.
