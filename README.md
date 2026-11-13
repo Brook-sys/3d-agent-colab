@@ -46,19 +46,18 @@ O deploy é pelo Portainer: a stack aponta para `ghcr.io/brook-sys/chili3d:main`
 o host Docker só faz o pull. Nada de toolchain, nada de Node, nada de Python na
 máquina.
 
-Para conferir que subiu (`8081` enquanto a stack antiga conviver; volta a `8080`
-quando ela sair — ver `PORTA_APP`):
+Para conferir que subiu:
 
 ```sh
-curl -s http://SEU-HOST:8081/healthz          # {"ok":true,"servico":"chili3d","relay":"..."}
-curl -s -o /dev/null -w '%{http_code}' -X OPTIONS http://SEU-HOST:8081/v1/chat/completions
+curl -s http://SEU-HOST:8080/healthz          # {"ok":true,"servico":"chili3d","relay":"..."}
+curl -s -o /dev/null -w '%{http_code}' -X OPTIONS http://SEU-HOST:8080/v1/chat/completions
 # 204 — o preflight é respondido por nós, não repassado ao relay
 ```
 
 Para usar o assistente: abra o app, cole a chave do relay na interface (ela fica
 na memória do navegador e evapora a cada recarregamento — é decisão do Chili3D,
 não deste repo), configure o **provedor OpenAI-compatível** com a URL Base
-`http://SEU-HOST:8081/v1` — **com `/v1`**, apontando para a própria origem — e o
+`http://SEU-HOST:8080/v1` — **com `/v1`**, apontando para a própria origem — e o
 modelo `topmodel`. A chave é a do **relay** (a tela de chaves do 9router), não uma
 chave de provedor de modelo.
 
@@ -66,6 +65,10 @@ Medido em deploy, com chave válida: `GET /v1/models` → `200` com a lista do r
 e `POST /v1/chat/completions` → `200` com a resposta do modelo, em JSON e em
 streaming. O que não está medido é o clique dentro da interface — o sandbox de
 desenvolvimento não alcança o host.
+
+A porta publicada é `PORTA_APP`, default `8080`. Ela existe para a convivência
+temporária com a stack antiga (`3d-agent-colab`), que ocupava a 8080: enquanto as
+duas conviveram, a nova subiu em `8081`. Com a antiga removida, voltou a `8080`.
 
 O `/v1` na URL não é o do relay, e confundir os dois já custeu uma tentativa: o
 SDK da OpenAI cola `/chat/completions` no baseURL (`completions.ts`:

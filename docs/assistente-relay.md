@@ -161,12 +161,11 @@ imagem, e abre o relay a qualquer origem.
 
 ```
 # o proxy responde o preflight por conta própria (não repassa)
-# 8081 enquanto a stack antiga conviver; 8080 depois
-curl -s -o /dev/null -w '%{http_code}' -X OPTIONS http://SEU-HOST:8081/v1/chat/completions
+curl -s -o /dev/null -w '%{http_code}' -X OPTIONS http://SEU-HOST:8080/v1/chat/completions
 # 204
 
 # e os três cabeçalhos
-curl -s -D - -o /dev/null -X OPTIONS http://SEU-HOST:8081/v1/chat/completions | grep -i access-control
+curl -s -D - -o /dev/null -X OPTIONS http://SEU-HOST:8080/v1/chat/completions | grep -i access-control
 # access-control-allow-origin: *
 # access-control-allow-methods: GET, POST, OPTIONS
 # access-control-allow-headers: authorization, content-type, accept
@@ -179,17 +178,16 @@ ela foi medida até a borda do HTTP: com chave válida, o proxy respondeu `200` 
 o modelo, em JSON e em streaming. O que falta é o passo dentro da interface do
 app, que exige o navegador do usuário.
 
-**Porta:** durante a transição entre a stack antiga e a nova, a nova sobe em
-`8081` (`PORTA_APP=8081`); a URL Base fica `http://SEU-HOST:8081/v1`. Quando a
-stack antiga sair, volta a `8080`.
+**Porta:** `8080` (`PORTA_APP`). Enquanto a stack antiga (`3d-agent-colab`, que
+publicava a API em 9001 e o app em 8080) conviveu com a nova, a nova subiu em
+`8081`; com a antiga removida, a URL Base voltou a `http://SEU-HOST:8080/v1`.
 
 ### A configuração certa no assistente, que tem uma pegadinha
 
 **Provedor:** o OpenAI-compatível (o padrão do app). Anthropic é outro dialeto.
 
-**URL Base:** `http://SEU-HOST:8081/v1` (**8081** enquanto a stack antiga
-conviver; `8080` depois) — **com `/v1`**, e o `/v1` é o **deste servidor**, não o
-do relay.
+**URL Base:** `http://SEU-HOST:8080/v1` — **com `/v1`**, e o `/v1` é o **deste
+servidor**, não o do relay.
 
 **Chave:** uma chave de API do próprio relay (a tela de chaves do 9router), não
 uma chave de provedor de modelo. **Modelo:** `topmodel`.
@@ -290,7 +288,7 @@ do usuário. O caminho HTTP inteiro foi medido de dentro do container — inclus
 com `origin` e preflight, que é o que o navegador faz —, mas o sandbox de
 desenvolvimento não alcança o host Docker, e nenhum teste deste repositório
 cobre a interface: o relay da suíte é falso de propósito. O que falta é o clique
-do usuário: abrir `http://SEU-HOST:8081`, colar a chave, mandar "oi".
+do usuário: abrir `http://SEU-HOST:8080`, colar a chave, mandar "oi".
 
 ---
 

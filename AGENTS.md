@@ -64,16 +64,16 @@ só se mede em deploy, com chave válida.
 | trava da versão | `sed -n 's/^CHILI3D_REF=//p' chili3d.ref` e conferir o `ARG` no Dockerfile | os dois batem (o CI também confere) |
 | coerência do relay | `RELAY_URL` no compose sem `/v1` no fim | `http://9router:20128` |
 | imagem builda | `./deploy/build-local.sh` | termina sem erro e lista `chili3d-dev` |
-| healthcheck | `curl -s http://SEU-HOST:8081/healthz` | `{"ok":true,...}` — e isso **não** prova o relay |
-| app servido | `curl -s -o /dev/null -w %{http_code} http://SEU-HOST:8081/` | `200` |
-| preflight | `curl -s -o /dev/null -w %{http_code} -X OPTIONS http://SEU-HOST:8081/v1/chat/completions` | `204` — respondido por nós |
-| URL Base do assistente | configuração no app | `http://SEU-HOST:8081/v1` — **com `/v1`**, o deste servidor (8081 só na transição) |
-| proxy | `curl -s -H 'authorization: Bearer <chave do relay>' http://SEU-HOST:8081/v1/models` | a lista de modelos do **relay real** |
-| proxy, ao vivo | `POST http://SEU-HOST:8081/v1/chat/completions` com chave válida | `200`, corpo do modelo — e **confirme antes que a chave chegou** |
+| healthcheck | `curl -s http://SEU-HOST:8080/healthz` | `{"ok":true,...}` — e isso **não** prova o relay |
+| app servido | `curl -s -o /dev/null -w %{http_code} http://SEU-HOST:8080/` | `200` |
+| preflight | `curl -s -o /dev/null -w %{http_code} -X OPTIONS http://SEU-HOST:8080/v1/chat/completions` | `204` — respondido por nós |
+| URL Base do assistente | configuração no app | `http://SEU-HOST:8080/v1` — **com `/v1`**, o deste servidor |
+| proxy | `curl -s -H 'authorization: Bearer <chave do relay>' http://SEU-HOST:8080/v1/models` | a lista de modelos do **relay real** |
+| proxy, ao vivo | `POST http://SEU-HOST:8080/v1/chat/completions` com chave válida | `200`, corpo do modelo — e **confirme antes que a chave chegou** |
 | assistente | abrir o app, colar a chave, mandar "oi" | resposta do modelo, não "Connection error." |
 
-A porta é `8081` enquanto a stack antiga conviver (`PORTA_APP=8081`); volta a
-`8080` quando ela sair.
+`PORTA_APP` existe para a convivência temporária com a stack antiga: enquanto as
+duas coexistem, a nova sobe em `8081`. Com a antiga removida, é `8080` de novo.
 
 Se uma dessas falhar, a tarefa **não** está pronta, por mais que o build tenha
 passado.
